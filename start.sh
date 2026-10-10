@@ -62,8 +62,85 @@ detect_distro() {
 
 detect_distro
 
-# Main menu options
-main_menu_items=("Show Status" "Set DNS" "Restore DNS Backup" "Install Docker" "Update Docker" "Set Docker Proxy" "Exit")
+# Resolve the home directory of the human user who invoked sudo, so per-user
+# configs (npm, pip, yarn) land in the right place instead of /root.
+# Sets globals: TARGET_USER, TARGET_HOME
+resolve_target_user() {
+    if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+        TARGET_USER="$SUDO_USER"
+        TARGET_HOME=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        [ -z "$TARGET_HOME" ] && TARGET_HOME="/home/$SUDO_USER"
+    else
+        TARGET_USER="root"
+        TARGET_HOME="${HOME:-/root}"
+    fi
+}
+
+resolve_target_user
+
+# Run a command as the invoking (non-root) user when possible, else as current user.
+run_as_user() {
+    if [ "$TARGET_USER" != "root" ] && command -v sudo >/dev/null 2>&1; then
+        sudo -u "$TARGET_USER" "$@"
+    else
+        "$@"
+    fi
+}
+
+# Write a file as the target user so ownership is correct (not root-owned).
+write_as_user() {
+    # Usage: write_as_user <path> <<< "content"  OR  piped stdin
+    local path="$1"
+    local dir
+    dir=$(dirname "$path")
+    mkdir -p "$dir"
+    cat > "$path"
+    if [ "$TARGET_USER" != "root" ]; then
+        chown -R "$TARGET_USER" "$dir" 2>/dev/null
+    fi
+}
+
+# Main menu options (top-level categories)
+main_menu_items=("Show Status" "DNS Tools" "Docker Tools" "Package Registries" "Diagnostics" "Exit")
+
+# ---- Mirror data (sourced from the Mirava project: github.com/MiravaOrg/Mirava) ----
+
+# APT mirror base hosts (used to rewrite sources.list). Keyed by display name.
+apt_mirror_options=("ArvanCloud" "IranServer" "Pardisco" "Ubuntu IR Archive" "Reset to Official")
+declare -A apt_mirror_hosts=(
+    ["ArvanCloud"]="mirror.arvancloud.ir"
+    ["IranServer"]="mirror.iranserver.com"
+    ["Pardisco"]="mirrors.pardisco.co"
+    ["Ubuntu IR Archive"]="ir.archive.ubuntu.com"
+    ["Reset to Official"]="archive.ubuntu.com"
+)
+
+# npm registry mirrors
+npm_registry_options=("Runflare" "Kargadan" "Reset to Official")
+declare -A npm_registry_urls=(
+    ["Runflare"]="https://mirror-npm.runflare.com/"
+    ["Kargadan"]="https://npm.kargadan.ir/"
+    ["Reset to Official"]="https://registry.npmjs.org/"
+)
+
+# pip (PyPI) index mirrors
+pip_index_options=("Runflare" "Kargadan" "ArvanCloud" "Reset to Official")
+declare -A pip_index_urls=(
+    ["Runflare"]="https://mirror-pypi.runflare.com/simple"
+    ["Kargadan"]="https://pypi.kargadan.ir/simple"
+    ["ArvanCloud"]="https://mirror.arvancloud.ir/pypi/web/simple"
+    ["Reset to Official"]="https://pypi.org/simple"
+)
+
+# Endpoints used by the connectivity doctor (label|url)
+connectivity_targets=(
+    "Docker Hub|https://registry-1.docker.io/v2/"
+    "GitHub|https://github.com"
+    "npm registry|https://registry.npmjs.org/"
+    "PyPI|https://pypi.org/simple/"
+    "Google|https://www.google.com"
+    "get.docker.com|https://get.docker.com"
+)
 
 # Available DNS providers and their servers
 dns_options=("Shecan" "Shecan Pro" "Radar" "Electro" "Begzar" "DNSPro" "403" "XCR9" "Bertina" "DynX" "Google" "Cloudflare" "Reset to Default")
@@ -413,11 +490,443 @@ set_docker_proxy() {
     echo -e "${GREEN}Docker proxy set to:${NC} $mirror"
 }
 
+
+# Remove the registry mirror from daemon.json and restart Docker
+reset_docker_proxy() {
+    if [ ! -f /etc/docker/daemon.json ]; then
+        echo -e "${CYAN}No /etc/docker/daemon.json found — nothing to reset.${NC}"
+        return
+    fi
+
+    # Back up current config before touching it
+    cp /etc/docker/daemon.json "/etc/docker/daemon.json.bak.$(date +%Y%m%d_%H%M%S)"
+
+    # Remove the registry-mirrors key. If jq is available use it; otherwise
+    # fall back to writing an empty config object.
+    if command -v jq >/dev/null 2>&1; then
+        tmp=$(mktemp)
+        if jq 'del(."registry-mirrors")' /etc/docker/daemon.json > "$tmp" 2>/dev/null; then
+            mv "$tmp" /etc/docker/daemon.json
+        else
+            rm -f "$tmp"
+            echo "{}" > /etc/docker/daemon.json
+        fi
+    else
+        echo "{}" > /etc/docker/daemon.json
+    fi
+
+    echo -e "${CYAN}Restarting Docker service...${NC}"
+    if systemctl restart docker; then
+        echo -e "${GREEN}Docker registry mirror removed and service restarted.${NC}"
+    else
+        echo -e "${RED}Warning:${NC} Config updated but Docker restart failed. Run: sudo systemctl restart docker"
+    fi
+}
+
+# Test the currently configured Docker mirror: latency + a real pull
+test_mirror_health() {
+    if [ ! -f /etc/docker/daemon.json ]; then
+        echo -e "${CYAN}No registry mirror configured (no daemon.json).${NC}"
+        return
+    fi
+
+    local mirror_url mirror_host
+    mirror_url=$(grep -oE 'https?://[^"]+' /etc/docker/daemon.json 2>/dev/null | head -1)
+    if [ -z "$mirror_url" ]; then
+        echo -e "${CYAN}No registry mirror set in daemon.json.${NC}"
+        return
+    fi
+
+    mirror_host=$(echo "$mirror_url" | sed -E 's#https?://##; s#/.*##')
+    echo -e "${GREEN}Configured mirror:${NC} $mirror_url"
+
+    # Latency
+    printf "Latency: "
+    local ping_time
+    ping_time=$(ping_proxy "$mirror_host")
+    if [ "$ping_time" = "timeout" ]; then
+        echo -e "${RED}unreachable (ping timeout)${NC}"
+    else
+        echo -e "${GREEN}${ping_time}ms${NC}"
+    fi
+
+    # HTTP reachability
+    printf "HTTP check: "
+    if curl -fsS --max-time 10 -o /dev/null "$mirror_url" 2>/dev/null; then
+        echo -e "${GREEN}reachable${NC}"
+    else
+        echo -e "${RED}no HTTP response${NC}"
+    fi
+
+    # Test pull (small image) if Docker is available
+    if command -v docker >/dev/null 2>&1; then
+        printf "Test pull (hello-world): "
+        if timeout 60 docker pull hello-world >/dev/null 2>&1; then
+            echo -e "${GREEN}success${NC}"
+        else
+            echo -e "${RED}failed${NC} (mirror may be down or image unavailable)"
+        fi
+    fi
+}
+
+# Install or update the Docker Compose plugin
+install_compose() {
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -e "${RED}Docker is not installed.${NC} Install Docker first."
+        return
+    fi
+
+    if docker compose version >/dev/null 2>&1; then
+        local cver
+        cver=$(docker compose version --short 2>/dev/null)
+        echo -e "${GREEN}Docker Compose already installed. Version: ${cver}${NC}"
+        return
+    fi
+
+    if [ "$PKG_MANAGER" = "unknown" ]; then
+        echo -e "${RED}Error:${NC} Unsupported distro — install docker-compose-plugin manually."
+        return 1
+    fi
+
+    echo -e "${CYAN}Installing Docker Compose plugin...${NC}"
+    eval "$PKG_UPDATE" >/dev/null 2>&1
+    if eval "$PKG_INSTALL docker-compose-plugin"; then
+        echo -e "${GREEN}Docker Compose installed:${NC} $(docker compose version --short 2>/dev/null)"
+    else
+        echo -e "${RED}Error:${NC} Failed to install docker-compose-plugin via $PKG_MANAGER."
+    fi
+}
+
+# Point APT at an Iranian mirror by rewriting the official host in sources.list
+set_apt_mirror() {
+    if [ "$PKG_MANAGER" != "apt" ]; then
+        echo -e "${CYAN}APT mirror switching only applies to Debian/Ubuntu (apt) systems.${NC}"
+        return
+    fi
+
+    echo
+    echo -e "${CYAN}Select APT mirror:${NC}"
+    for i in "${!apt_mirror_options[@]}"; do
+        name="${apt_mirror_options[$i]}"
+        echo "  $((i + 1))) $name  (${apt_mirror_hosts[$name]})"
+    done
+    echo "  0) Back"
+    echo
+    read -rp "Select (0-${#apt_mirror_options[@]}): " apt_choice
+
+    if [[ "$apt_choice" == "0" ]]; then return; fi
+    if [[ ! "$apt_choice" =~ ^[0-9]+$ ]] || (( apt_choice < 1 || apt_choice > ${#apt_mirror_options[@]} )); then
+        echo -e "${RED}Invalid option${NC}"; return
+    fi
+
+    local name host target
+    name="${apt_mirror_options[$((apt_choice - 1))]}"
+    host="${apt_mirror_hosts[$name]}"
+
+    # Determine which sources file is in use (classic list vs deb822)
+    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+        target="/etc/apt/sources.list.d/ubuntu.sources"
+    else
+        target="/etc/apt/sources.list"
+    fi
+
+    if [ ! -f "$target" ]; then
+        echo -e "${RED}Error:${NC} $target not found."
+        return
+    fi
+
+    # Backup before editing
+    cp "$target" "${target}.bak.$(date +%Y%m%d_%H%M%S)"
+
+    # Replace any known Ubuntu/mirror host with the chosen one
+    sed -i -E "s#(https?://)[a-zA-Z0-9._-]*(archive\.ubuntu\.com|security\.ubuntu\.com|mirror\.arvancloud\.ir|mirror\.iranserver\.com|mirrors\.pardisco\.co|ir\.archive\.ubuntu\.com)#\1${host}#g" "$target"
+
+    echo -e "${GREEN}APT mirror set to:${NC} $host"
+    echo -e "${CYAN}Refreshing package lists...${NC}"
+    if apt-get update; then
+        echo -e "${GREEN}Done.${NC}"
+    else
+        echo -e "${RED}Warning:${NC} apt-get update failed. Restore from ${target}.bak.* if needed."
+    fi
+}
+
+# Set the npm registry (written to the invoking user's ~/.npmrc)
+set_npm_registry() {
+    echo
+    echo -e "${CYAN}Select npm registry (applies for user: $TARGET_USER):${NC}"
+    for i in "${!npm_registry_options[@]}"; do
+        name="${npm_registry_options[$i]}"
+        echo "  $((i + 1))) $name  (${npm_registry_urls[$name]})"
+    done
+    echo "  0) Back"
+    echo
+    read -rp "Select (0-${#npm_registry_options[@]}): " npm_choice
+
+    if [[ "$npm_choice" == "0" ]]; then return; fi
+    if [[ ! "$npm_choice" =~ ^[0-9]+$ ]] || (( npm_choice < 1 || npm_choice > ${#npm_registry_options[@]} )); then
+        echo -e "${RED}Invalid option${NC}"; return
+    fi
+
+    local name url
+    name="${npm_registry_options[$((npm_choice - 1))]}"
+    url="${npm_registry_urls[$name]}"
+
+    # Prefer the npm CLI if available (keeps .npmrc valid); else write the file
+    if command -v npm >/dev/null 2>&1; then
+        run_as_user npm config set registry "$url"
+    else
+        local npmrc="$TARGET_HOME/.npmrc"
+        [ -f "$npmrc" ] && cp "$npmrc" "${npmrc}.bak.$(date +%Y%m%d_%H%M%S)"
+        write_as_user "$npmrc" <<EOF
+registry=$url
+EOF
+    fi
+    echo -e "${GREEN}npm registry set to:${NC} $url"
+}
+
+# Set the pip index-url (written to the invoking user's pip.conf)
+set_pip_mirror() {
+    echo
+    echo -e "${CYAN}Select pip (PyPI) index (applies for user: $TARGET_USER):${NC}"
+    for i in "${!pip_index_options[@]}"; do
+        name="${pip_index_options[$i]}"
+        echo "  $((i + 1))) $name  (${pip_index_urls[$name]})"
+    done
+    echo "  0) Back"
+    echo
+    read -rp "Select (0-${#pip_index_options[@]}): " pip_choice
+
+    if [[ "$pip_choice" == "0" ]]; then return; fi
+    if [[ ! "$pip_choice" =~ ^[0-9]+$ ]] || (( pip_choice < 1 || pip_choice > ${#pip_index_options[@]} )); then
+        echo -e "${RED}Invalid option${NC}"; return
+    fi
+
+    local name url host
+    name="${pip_index_options[$((pip_choice - 1))]}"
+    url="${pip_index_urls[$name]}"
+    host=$(echo "$url" | sed -E 's#https?://##; s#/.*##')
+
+    local pipconf="$TARGET_HOME/.config/pip/pip.conf"
+    [ -f "$pipconf" ] && cp "$pipconf" "${pipconf}.bak.$(date +%Y%m%d_%H%M%S)"
+
+    if [ "$name" = "Reset to Official" ]; then
+        write_as_user "$pipconf" <<EOF
+[global]
+index-url = $url
+EOF
+    else
+        write_as_user "$pipconf" <<EOF
+[global]
+index-url = $url
+trusted-host = $host
+EOF
+    fi
+    echo -e "${GREEN}pip index set to:${NC} $url"
+}
+
+# Set the Yarn registry (reuses the npm mirror list)
+set_yarn_registry() {
+    if ! command -v yarn >/dev/null 2>&1; then
+        echo -e "${CYAN}Yarn is not installed.${NC}"
+        return
+    fi
+
+    echo
+    echo -e "${CYAN}Select Yarn registry (applies for user: $TARGET_USER):${NC}"
+    for i in "${!npm_registry_options[@]}"; do
+        name="${npm_registry_options[$i]}"
+        echo "  $((i + 1))) $name  (${npm_registry_urls[$name]})"
+    done
+    echo "  0) Back"
+    echo
+    read -rp "Select (0-${#npm_registry_options[@]}): " yarn_choice
+
+    if [[ "$yarn_choice" == "0" ]]; then return; fi
+    if [[ ! "$yarn_choice" =~ ^[0-9]+$ ]] || (( yarn_choice < 1 || yarn_choice > ${#npm_registry_options[@]} )); then
+        echo -e "${RED}Invalid option${NC}"; return
+    fi
+
+    local name url
+    name="${npm_registry_options[$((yarn_choice - 1))]}"
+    url="${npm_registry_urls[$name]}"
+    run_as_user yarn config set registry "$url"
+    echo -e "${GREEN}Yarn registry set to:${NC} $url"
+}
+
+# Connectivity doctor: check reachability of key developer endpoints and flag
+# sanction-style blocks (HTTP 403) vs. plain unreachability.
+connectivity_doctor() {
+    echo
+    echo -e "${CYAN}============ Connectivity Doctor ============${NC}"
+    printf "%-16s %s\n" "SERVICE" "RESULT"
+    echo "---------------------------------------------"
+
+    for entry in "${connectivity_targets[@]}"; do
+        local label url code
+        label="${entry%%|*}"
+        url="${entry#*|}"
+
+        # Grab the HTTP status code (follow redirects, short timeout)
+        code=$(curl -s -o /dev/null -L --max-time 10 -w '%{http_code}' "$url" 2>/dev/null)
+
+        if [ -z "$code" ] || [ "$code" = "000" ]; then
+            printf "%-16s ${RED}%s${NC}\n" "$label" "unreachable / blocked"
+        elif [ "$code" = "403" ]; then
+            printf "%-16s ${RED}%s${NC}\n" "$label" "HTTP 403 (likely sanction block)"
+        elif [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
+            printf "%-16s ${GREEN}%s${NC}\n" "$label" "OK ($code)"
+        elif [ "$code" = "401" ]; then
+            # Registries often return 401 when reachable but unauthenticated
+            printf "%-16s ${GREEN}%s${NC}\n" "$label" "reachable ($code)"
+        else
+            printf "%-16s ${CYAN}%s${NC}\n" "$label" "HTTP $code"
+        fi
+    done
+    echo -e "${CYAN}=============================================${NC}"
+    echo -e "Tip: if Docker Hub or PyPI show blocked/403, set a DNS or mirror from the menus."
+}
+
+# DNS benchmark: ping each provider's primary server and test whether it can
+# resolve Docker Hub, then recommend the fastest working resolver.
+dns_benchmark() {
+    echo
+    echo -e "${CYAN}============== DNS Benchmark ================${NC}"
+    printf "%-14s %-10s %s\n" "PROVIDER" "LATENCY" "RESOLVES docker.io"
+    echo "---------------------------------------------"
+
+    local best_provider="" best_time="999999"
+
+    for provider in "${dns_options[@]}"; do
+        [ "$provider" = "Reset to Default" ] && continue
+        local primary ping_time resolves
+        primary=$(echo "${dns_servers[$provider]}" | awk '{print $1}')
+
+        ping_time=$(ping_proxy "$primary")
+
+        # Can this resolver answer for Docker Hub?
+        if command -v nslookup >/dev/null 2>&1; then
+            if nslookup -timeout=2 registry-1.docker.io "$primary" >/dev/null 2>&1; then
+                resolves="${GREEN}yes${NC}"
+            else
+                resolves="${RED}no${NC}"
+            fi
+        elif command -v dig >/dev/null 2>&1; then
+            if [ -n "$(dig +time=2 +tries=1 @"$primary" registry-1.docker.io +short 2>/dev/null)" ]; then
+                resolves="${GREEN}yes${NC}"
+            else
+                resolves="${RED}no${NC}"
+            fi
+        else
+            resolves="${CYAN}n/a${NC}"
+        fi
+
+        if [ "$ping_time" = "timeout" ]; then
+            printf "%-14s ${RED}%-10s${NC} %b\n" "$provider" "timeout" "$resolves"
+        else
+            printf "%-14s %-10s %b\n" "$provider" "${ping_time}ms" "$resolves"
+            if (( $(awk -v p="$ping_time" -v b="$best_time" 'BEGIN {print (p < b) ? 1 : 0}') )); then
+                best_time="$ping_time"
+                best_provider="$provider"
+            fi
+        fi
+    done
+
+    echo -e "${CYAN}=============================================${NC}"
+    if [ -n "$best_provider" ]; then
+        echo -e "${GREEN}Fastest resolver:${NC} $best_provider (${best_time}ms)"
+        echo -e "Set it from: DNS Tools -> Set DNS"
+    else
+        echo -e "${RED}No resolver responded to ping.${NC}"
+    fi
+}
+
+# ---- Submenus ----
+
+dns_menu() {
+    local items=("Set DNS" "Restore DNS Backup" "DNS Benchmark")
+    while true; do
+        echo
+        echo -e "${CYAN}DNS Tools:${NC}"
+        for i in "${!items[@]}"; do echo "  $((i + 1))) ${items[$i]}"; done
+        echo "  0) Back"
+        echo
+        read -rp "Select (0-${#items[@]}): " c
+        case "$c" in
+            1) set_dns ;;
+            2) restore_dns_backup ;;
+            3) dns_benchmark ;;
+            0) return ;;
+            *) echo -e "${RED}Invalid choice${NC}" ;;
+        esac
+    done
+}
+
+docker_menu() {
+    local items=("Install Docker" "Update Docker" "Set Docker Proxy" "Reset Docker Proxy" "Test Mirror Health" "Install Docker Compose")
+    while true; do
+        echo
+        echo -e "${CYAN}Docker Tools:${NC}"
+        for i in "${!items[@]}"; do echo "  $((i + 1))) ${items[$i]}"; done
+        echo "  0) Back"
+        echo
+        read -rp "Select (0-${#items[@]}): " c
+        case "$c" in
+            1) install_docker ;;
+            2) update_docker ;;
+            3) set_docker_proxy ;;
+            4) reset_docker_proxy ;;
+            5) test_mirror_health ;;
+            6) install_compose ;;
+            0) return ;;
+            *) echo -e "${RED}Invalid choice${NC}" ;;
+        esac
+    done
+}
+
+registries_menu() {
+    local items=("Set APT Mirror" "Set npm Registry" "Set pip (PyPI) Mirror" "Set Yarn Registry")
+    while true; do
+        echo
+        echo -e "${CYAN}Package Registries:${NC}"
+        for i in "${!items[@]}"; do echo "  $((i + 1))) ${items[$i]}"; done
+        echo "  0) Back"
+        echo
+        read -rp "Select (0-${#items[@]}): " c
+        case "$c" in
+            1) set_apt_mirror ;;
+            2) set_npm_registry ;;
+            3) set_pip_mirror ;;
+            4) set_yarn_registry ;;
+            0) return ;;
+            *) echo -e "${RED}Invalid choice${NC}" ;;
+        esac
+    done
+}
+
+diagnostics_menu() {
+    local items=("Connectivity Doctor" "DNS Benchmark" "Test Docker Mirror Health")
+    while true; do
+        echo
+        echo -e "${CYAN}Diagnostics:${NC}"
+        for i in "${!items[@]}"; do echo "  $((i + 1))) ${items[$i]}"; done
+        echo "  0) Back"
+        echo
+        read -rp "Select (0-${#items[@]}): " c
+        case "$c" in
+            1) connectivity_doctor ;;
+            2) dns_benchmark ;;
+            3) test_mirror_health ;;
+            0) return ;;
+            *) echo -e "${RED}Invalid choice${NC}" ;;
+        esac
+    done
+}
+
 # Main Menu and Program Entry Point
 main_menu() {
     while true; do
         echo
-        echo -e "${CYAN}Main Menu:${NC}"
+        echo -e "${CYAN}===== Iranian Servers Toolkit =====${NC}"
         for i in "${!main_menu_items[@]}"; do
             echo "  $((i + 1))) ${main_menu_items[$i]}"
         done
@@ -426,12 +935,11 @@ main_menu() {
 
         case "$choice" in
             1) show_status ;;
-            2) set_dns ;;
-            3) restore_dns_backup ;;
-            4) install_docker ;;
-            5) update_docker ;;
-            6) set_docker_proxy ;;
-            7) echo -e "${CYAN}Bye.${NC}"; exit 0 ;;
+            2) dns_menu ;;
+            3) docker_menu ;;
+            4) registries_menu ;;
+            5) diagnostics_menu ;;
+            6) echo -e "${CYAN}Bye.${NC}"; exit 0 ;;
             *) echo -e "${RED}Invalid choice${NC}" ;;
         esac
     done

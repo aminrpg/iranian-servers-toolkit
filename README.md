@@ -6,6 +6,8 @@
 
 Check your system status, change your DNS, install or update Docker, and point Docker at a fast Iranian registry mirror — all from one simple terminal menu, no manual config editing required.
 
+**🌐 Languages:** English (this page) · [فارسی / Persian](./README.fa.md)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Linux-blue.svg)
 ![Distros](https://img.shields.io/badge/distros-apt%20%7C%20dnf%20%7C%20yum%20%7C%20pacman%20%7C%20zypper-informational.svg)
@@ -29,12 +31,17 @@ This script wraps all of that into one menu. Pick an option, and it handles the 
 - 💾 **Automatic DNS backup** — every change saves a timestamped copy of `/etc/resolv.conf` first, so you can always roll back.
 - ⏪ **Restore from backup** — browse your saved `resolv.conf` backups and roll back to any of them in one step.
 - 🐧 **Multi-distro support** — auto-detects `apt`, `dnf`, `yum`, `pacman`, or `zypper`, so it runs beyond Debian/Ubuntu.
-- 🐳 **One-command Docker install** — refreshes package lists, installs prerequisites, and runs the official Docker install script.
-- ⬆️ **Docker updater** — pull the latest Docker Engine with a single menu option.
-- 🪞 **Iranian registry mirrors** — configure Docker to pull images through 15 local mirrors (ArvanCloud, Liara, Haiocloud, Iranserver, and others).
-- ⚡ **Auto-pick the fastest mirror** — benchmarks every mirror with `ping` and selects the lowest-latency one for you.
-- 🔁 **Automatic service restart** — applies the mirror config and restarts the Docker daemon automatically.
-- 🛡️ **Safe by design** — refuses to run without root, validates every menu choice, and never overwrites config without a backup.
+- 🐳 **One-command Docker install / update** — refreshes packages, installs prerequisites, and runs the official Docker script.
+- 🪞 **Iranian Docker registry mirrors** — pull images through 15 local mirrors, with an unset option to remove them again.
+- ⚡ **Auto-pick the fastest mirror** — benchmarks every mirror with `ping` and selects the lowest-latency one.
+- 🩺 **Mirror health test** — checks your configured Docker mirror's latency, HTTP reachability, and a real test pull.
+- 🧩 **Docker Compose installer** — install or update the Compose plugin in one step.
+- 📦 **Package registry mirrors** — point **APT**, **npm**, **Yarn**, and **pip** at fast Iranian mirrors (per-user configs land in the right home, not root's).
+- 🧪 **Connectivity doctor** — one check that probes Docker Hub, GitHub, npm, PyPI, and Google, flagging sanction-style `403` blocks.
+- 📡 **DNS benchmark** — pings every resolver, tests which can resolve Docker Hub, and recommends the fastest working one.
+- 🗂️ **Organized submenus** — tidy categories (DNS, Docker, Package Registries, Diagnostics) instead of one long list.
+- 🔁 **Automatic service restart** — applies mirror config and restarts the Docker daemon automatically.
+- 🛡️ **Safe by design** — refuses to run without root, validates every menu choice, and backs up each config before changing it.
 
 ## 🚀 Quick Start
 
@@ -50,7 +57,9 @@ chmod +x start.sh
 sudo ./start.sh
 ```
 
-> **Note:** The script must be run with root privileges (via `sudo`) because it edits system files (`/etc/resolv.conf`, `/etc/docker/daemon.json`) and restarts the Docker service. It will exit immediately if run as a normal user.
+> **Note:** The script must be run with root privileges (via `sudo`) because it edits system files (`/etc/resolv.conf`, `/etc/docker/daemon.json`, `/etc/apt/sources.list`) and restarts the Docker service. It will exit immediately if run as a normal user.
+>
+> Per-user tools (npm, Yarn, pip) are written to the **invoking user's** home — detected via `$SUDO_USER` — so configs don't end up owned by root in `/root`.
 
 ### Run it directly (one-liner)
 
@@ -60,30 +69,58 @@ If you just want to run it without keeping the repo around:
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-servers-toolkit/main/start.sh)"
 ```
 
-## 🧭 Menu Options
+## 🧭 Menu Structure
 
-When you launch the script, you'll see the main menu:
+The toolkit is organized into a main menu with category submenus:
 
 ```
-Main Menu:
+===== Iranian Servers Toolkit =====
   1) Show Status
-  2) Set DNS
-  3) Restore DNS Backup
-  4) Install Docker
-  5) Update Docker
-  6) Set Docker Proxy
-  7) Exit
+  2) DNS Tools
+  3) Docker Tools
+  4) Package Registries
+  5) Diagnostics
+  6) Exit
 ```
 
-| # | Option | What it does |
-|---|--------|--------------|
-| 1 | **Show Status** | Dashboard view: OS, package manager, kernel, current DNS, number of DNS backups, Docker version, and active registry mirror. |
-| 2 | **Set DNS** | Pick a DNS provider; the script backs up and rewrites `/etc/resolv.conf`. |
-| 3 | **Restore DNS Backup** | List saved `/etc/resolv.conf.bak.*` files (with timestamps) and restore any of them. |
-| 4 | **Install Docker** | Refreshes packages, installs `curl`, then installs Docker via `get.docker.com`. Skips if Docker is already present. |
-| 5 | **Update Docker** | Re-runs the official installer to upgrade Docker to the latest version. |
-| 6 | **Set Docker Proxy** | Choose a registry mirror (or auto-select the fastest) and write `/etc/docker/daemon.json`, then restart Docker. |
-| 7 | **Exit** | Quit the script. |
+### 1 · Show Status
+A one-screen dashboard: OS, package manager, kernel, current DNS servers, number of DNS backups, Docker version, and the active registry mirror.
+
+### 2 · DNS Tools
+
+| Option | What it does |
+|--------|--------------|
+| **Set DNS** | Pick a provider; backs up and rewrites `/etc/resolv.conf`. |
+| **Restore DNS Backup** | List saved `/etc/resolv.conf.bak.*` files (with timestamps) and restore any of them. |
+| **DNS Benchmark** | Ping every resolver, test which can resolve `registry-1.docker.io`, and recommend the fastest. |
+
+### 3 · Docker Tools
+
+| Option | What it does |
+|--------|--------------|
+| **Install Docker** | Refreshes packages, installs `curl`, then installs Docker via `get.docker.com`. Skips if already present. |
+| **Update Docker** | Re-runs the official installer to upgrade Docker. |
+| **Set Docker Proxy** | Choose a registry mirror (or auto-select the fastest) and write `/etc/docker/daemon.json`, then restart Docker. |
+| **Reset Docker Proxy** | Remove the mirror from `daemon.json` (backing it up first) and restart Docker. |
+| **Test Mirror Health** | Report the configured mirror's latency, HTTP reachability, and a real `hello-world` test pull. |
+| **Install Docker Compose** | Install or update the `docker-compose-plugin`. |
+
+### 4 · Package Registries
+
+| Option | What it does |
+|--------|--------------|
+| **Set APT Mirror** | Rewrite `sources.list` to an Iranian mirror (ArvanCloud, IranServer, Pardisco, Ubuntu IR archive), with backup. |
+| **Set npm Registry** | Point npm at an Iranian registry (via `npm config` or `~/.npmrc`). |
+| **Set pip (PyPI) Mirror** | Write `~/.config/pip/pip.conf` with an Iranian `index-url` + `trusted-host`. |
+| **Set Yarn Registry** | Point Yarn at an Iranian registry (reuses the npm mirror list). |
+
+### 5 · Diagnostics
+
+| Option | What it does |
+|--------|--------------|
+| **Connectivity Doctor** | Probe Docker Hub, GitHub, npm, PyPI, Google and `get.docker.com`; flag `403` sanction blocks vs. unreachable. |
+| **DNS Benchmark** | Same resolver benchmark available under DNS Tools. |
+| **Test Docker Mirror Health** | Same mirror health test available under Docker Tools. |
 
 ## 🌐 Supported DNS Providers
 
@@ -134,14 +171,36 @@ The selected mirror is written to `/etc/docker/daemon.json` like this:
 
 Docker is then restarted automatically with `systemctl restart docker` to apply the change.
 
+## 📦 Supported Package Registry Mirrors
+
+Available under **Package Registries**. Each writes a backup before changing anything, and each list includes a **Reset to Official** entry to revert.
+
+| Tool | Mirrors offered | Config touched |
+|------|-----------------|----------------|
+| **APT** | ArvanCloud, IranServer, Pardisco, Ubuntu IR Archive | `/etc/apt/sources.list` (or `ubuntu.sources`) |
+| **npm** | Runflare, Kargadan | `npm config` / `~/.npmrc` |
+| **Yarn** | Runflare, Kargadan | `yarn config` |
+| **pip** | Runflare, Kargadan, ArvanCloud | `~/.config/pip/pip.conf` |
+
+> Mirror hostnames are sourced from the community-maintained [Mirava](https://github.com/MiravaOrg/Mirava) project. If a mirror changes or a better one appears, edit the arrays near the top of `start.sh` (`apt_mirror_hosts`, `npm_registry_urls`, `pip_index_urls`) — see [Contributing](#-contributing).
+
+## 🩺 Diagnostics
+
+- **Connectivity Doctor** — issues a short-timeout `curl` to each key endpoint and classifies the result: `OK`, `reachable (401)`, `HTTP 403 (likely sanction block)`, or `unreachable / blocked`. A fast way to see *what* is blocked before changing anything.
+- **DNS Benchmark** — pings each resolver's primary server and uses `nslookup`/`dig` to confirm it can resolve `registry-1.docker.io`, then recommends the fastest responsive one.
+- **Test Mirror Health** — verifies the Docker mirror you already configured actually works end-to-end (latency + HTTP + a real pull).
+
 ## 🔧 How It Works
 
 - **Distro detection** — on startup, `detect_distro()` reads `/etc/os-release` for the OS name and probes for `apt`, `dnf`, `yum`, `pacman`, or `zypper`, then wires the right update/install commands for that package manager.
+- **Per-user configs** — `resolve_target_user()` reads `$SUDO_USER` so npm/Yarn/pip settings are written to the real user's home and `chown`ed back to them, not left root-owned.
 - **Status dashboard** — `show_status()` reads the detected OS, parses `nameserver` lines from `/etc/resolv.conf`, counts backups, queries the Docker version, and extracts `registry-mirrors` from `/etc/docker/daemon.json`.
 - **DNS** — `set_dns()` backs up `/etc/resolv.conf`, then writes new `nameserver` lines for the chosen provider (adding `options edns0 trust-ad` and preserving any `search` domains, except on reset).
 - **Restore** — `restore_dns_backup()` lists every `/etc/resolv.conf.bak.*` (newest first, with timestamps) and copies the chosen one back — after backing up the current file so the restore is itself reversible.
 - **Docker install/update** — refreshes package lists via the detected package manager, installs `curl`, and pipes the official `https://get.docker.com` script into `sh`. Installation is skipped if Docker is already detected.
-- **Registry mirror** — writes `/etc/docker/daemon.json` and restarts the Docker daemon. The auto-select mode uses `ping` + `awk` to compare float latencies across all mirrors.
+- **Registry mirror** — writes `/etc/docker/daemon.json` and restarts the Docker daemon. The auto-select mode uses `ping` + `awk` to compare float latencies across all mirrors; the reset path uses `jq` when available (falling back to an empty config) and backs up `daemon.json` first.
+- **APT mirror** — `set_apt_mirror()` detects the classic `sources.list` or the newer deb822 `ubuntu.sources`, backs it up, and `sed`-rewrites known upstream hosts to the chosen Iranian mirror before running `apt-get update`.
+- **Diagnostics** — the connectivity doctor and DNS benchmark are read-only (they change no config); they only probe endpoints and report.
 
 ## ✅ Requirements
 
@@ -149,6 +208,7 @@ Docker is then restarted automatically with `systemctl restart docker` to apply 
 - `systemd` (`systemctl`) for the Docker service restart step.
 - **Root** access (`sudo`).
 - `curl`, `ping`, and `awk` available (the script installs `curl` automatically if missing).
+- **Optional:** `jq` (cleaner Docker-proxy reset), `nslookup` or `dig` (DNS-benchmark resolution test), and `npm`/`yarn`/`pip` for those registry options. The script degrades gracefully when they're missing.
 
 > The official `get.docker.com` installer supports the major distros above. If you're on an unsupported distro, the script will tell you and skip the install rather than guess.
 
@@ -161,76 +221,23 @@ Docker is then restarted automatically with `systemctl restart docker` to apply 
 
 ## 🤝 Contributing
 
-Contributions are very welcome — whether it's a new DNS resolver, a faster Docker mirror, a bug fix, or an improvement to the docs. Here's how to get started.
+Contributions are very welcome — a new DNS resolver, a faster mirror, a bug fix, or a docs improvement. See the full guide in **[CONTRIBUTING.md](./CONTRIBUTING.md)** for how to add a provider or mirror, test your change, and open a pull request.
 
-### 1. Fork & clone
+Quick version:
 
 ```bash
-# Fork the repo on GitHub first, then:
-git clone https://github.com/<your-username>/iranian-servers-toolkit.git
-cd iranian-servers-toolkit
 git checkout -b my-feature
+# edit start.sh (arrays live near the top)
+bash -n start.sh && shellcheck start.sh   # verify
+git commit -am "Add YourProvider" && git push origin my-feature
 ```
 
-### 2. Make your change
+Report bugs and request features via the [issue tracker](https://github.com/aminrpg/iranian-servers-toolkit/issues).
 
-The whole project is a single file: [`start.sh`](./start.sh). The most common contributions are adding a DNS provider or a registry mirror.
+## 🙏 Acknowledgements
 
-**Add a DNS provider** — add it to both the `dns_options` list and the `dns_servers` map:
-
-```bash
-# 1) Add the display name to the options list
-dns_options=( ... "YourProvider" "Reset to Default")
-
-# 2) Add its nameservers to the associative array
-declare -A dns_servers=(
-    ...
-    ["YourProvider"]="1.2.3.4 5.6.7.8"
-)
-```
-
-**Add a Docker registry mirror** — append the hostname (no `https://`) to the `registry_proxies` array:
-
-```bash
-registry_proxies=(
-    ...
-    "mirror.example.ir"
-)
-```
-
-### 3. Test it
-
-Before opening a PR, make sure the script still runs and your addition shows up and works:
-
-```bash
-# Lint for shell issues (install via: apt-get install shellcheck)
-shellcheck start.sh
-
-# Run it and manually verify your new entry appears and applies correctly
-sudo ./start.sh
-```
-
-Please confirm that:
-- The script starts without syntax errors.
-- Your new DNS/mirror appears in the menu and applies correctly.
-- A new DNS entry has a matching key in **both** `dns_options` and `dns_servers`.
-
-### 4. Commit & open a Pull Request
-
-```bash
-git add start.sh
-git commit -m "Add YourProvider DNS" 
-git push origin my-feature
-```
-
-Then open a Pull Request on GitHub with a short description of what you added and why (e.g. a link proving the mirror/resolver is publicly available and reliable).
-
-### Contribution guidelines
-
-- **Keep it POSIX-friendly Bash** and match the existing style (indentation, quoting, the `${COLOR}...${NC}` helpers).
-- **One logical change per PR** so it's easy to review.
-- **Only add resolvers/mirrors that are publicly operated and trustworthy** — this tool touches system DNS and Docker config, so reliability matters.
-- **Report bugs & request features** via the [issue tracker](https://github.com/aminrpg/iranian-servers-toolkit/issues); include your OS, the menu option used, and any error output.
+- Package-registry and APT mirror hostnames are drawn from the community-maintained [**Mirava**](https://github.com/MiravaOrg/Mirava) project — a curated list of Iranian package mirrors.
+- Docker installation uses the official [get.docker.com](https://get.docker.com) convenience script.
 
 ## 📜 License
 
@@ -241,7 +248,6 @@ See [`LICENSE`](./LICENSE) for the full text.
 
 Made with ❤️ by **Amin Sepehri**
 
-- 🏢 Company: **Netramz**
 - 📍 Location: Tehran, Iran
 - 🌐 Website: [AminSepehri.com](http://AminSepehri.com)
 
