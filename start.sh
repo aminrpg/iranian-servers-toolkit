@@ -138,6 +138,64 @@ declare -A pip_index_urls=(
     ["Reset to Official"]="https://pypi.org/simple"
 )
 
+# Composer (PHP / Packagist) mirrors — full repo URL
+composer_options=("Liara" "Kargadan" "Reset to Official")
+declare -A composer_urls=(
+    ["Liara"]="https://repo.liara.ir/composer"
+    ["Kargadan"]="https://composer.kargadan.ir"
+    ["Reset to Official"]="https://repo.packagist.org"
+)
+
+# Go module proxy (GOPROXY) mirrors — full proxy URL
+go_proxy_options=("Liara" "Kargadan" "Reset to Official")
+declare -A go_proxy_urls=(
+    ["Liara"]="https://repo.liara.ir/go"
+    ["Kargadan"]="https://goproxy.kargadan.ir"
+    ["Reset to Official"]="https://proxy.golang.org"
+)
+
+# NuGet (.NET) mirrors — full v3 index URL
+nuget_options=("Kargadan" "Pardisco" "Reset to Official")
+declare -A nuget_urls=(
+    ["Kargadan"]="https://nuget.kargadan.ir/v3/index.json"
+    ["Pardisco"]="https://mirrors.pardisco.co/nuget/v3/index.json"
+    ["Reset to Official"]="https://api.nuget.org/v3/index.json"
+)
+
+# Maven / Gradle mirrors — full repository URL (written to ~/.m2/settings.xml)
+maven_options=("Myket" "Kargadan" "Reset to Official")
+declare -A maven_urls=(
+    ["Myket"]="https://maven.myket.ir"
+    ["Kargadan"]="https://maven.kargadan.ir"
+    ["Reset to Official"]="https://repo1.maven.org/maven2"
+)
+
+# DNF/YUM mirror base hosts (Fedora/Rocky/CentOS) — used to rewrite repo baseurls
+dnf_mirror_options=("ArvanCloud" "IUT" "Zero-One Cloud" "Reset to Official")
+declare -A dnf_mirror_hosts=(
+    ["ArvanCloud"]="mirror.arvancloud.ir"
+    ["IUT"]="repo.iut.ac.ir"
+    ["Zero-One Cloud"]="mirror.0-1.cloud"
+    ["Reset to Official"]="download.fedoraproject.org"
+)
+
+# Pacman mirror Server lines (Arch/Manjaro) — full Server= URL template
+pacman_mirror_options=("ArvanCloud" "IUT" "Zero-One Cloud" "Reset to Official")
+declare -A pacman_mirror_urls=(
+    ["ArvanCloud"]="https://mirror.arvancloud.ir/archlinux/\$repo/os/\$arch"
+    ["IUT"]="https://repo.iut.ac.ir/repo/archlinux/\$repo/os/\$arch"
+    ["Zero-One Cloud"]="https://mirror.0-1.cloud/archlinux/\$repo/os/\$arch"
+    ["Reset to Official"]="https://geo.mirror.pkgbuild.com/\$repo/os/\$arch"
+)
+
+# GitHub proxy prefixes — used with git's url.<proxy>.insteadOf for clones/downloads
+github_proxy_options=("IranGit (scorpian)" "theazizi (releases)" "Reset to Official")
+declare -A github_proxy_urls=(
+    ["IranGit (scorpian)"]="https://scorpian.ir/https://github.com/"
+    ["theazizi (releases)"]="https://gitdl.theazizi.ir/https://github.com/"
+    ["Reset to Official"]="https://github.com/"
+)
+
 # Endpoints used by the connectivity doctor (label|url)
 connectivity_targets=(
     "Docker Hub|https://registry-1.docker.io/v2/"
@@ -889,25 +947,7 @@ docker_menu() {
     done
 }
 
-registries_menu() {
-    local items=("Set APT Mirror" "Set npm Registry" "Set pip (PyPI) Mirror" "Set Yarn Registry")
-    while true; do
-        echo
-        echo -e "${CYAN}Package Registries:${NC}"
-        for i in "${!items[@]}"; do echo "  $((i + 1))) ${items[$i]}"; done
-        echo "  0) Back"
-        echo
-        read -rp "Select (0-${#items[@]}): " c
-        case "$c" in
-            1) set_apt_mirror ;;
-            2) set_npm_registry ;;
-            3) set_pip_mirror ;;
-            4) set_yarn_registry ;;
-            0) return ;;
-            *) echo -e "${RED}Invalid choice${NC}" ;;
-        esac
-    done
-}
+# registries_menu is defined later (appended) with the full set of registries.
 
 diagnostics_menu() {
     local items=("Connectivity Doctor" "DNS Benchmark" "Test Docker Mirror Health")
@@ -1207,6 +1247,306 @@ server_setup_menu() {
             4) setup_firewall ;;
             5) install_base_packages ;;
             6) full_system_update ;;
+            0) return ;;
+            *) echo -e "${RED}Invalid choice${NC}" ;;
+        esac
+    done
+}
+
+
+# ---- Extra package registry setters (Composer, Go, NuGet, Maven) ----
+
+# Generic selector: echoes the chosen "name|url" or empty on back/invalid.
+# Usage: pick_registry "Title" options_array_name urls_assoc_name
+pick_registry() {
+    local title="$1"; local -n _opts="$2"; local -n _urls="$3"
+    echo
+    echo -e "${CYAN}${title} (applies for user: $TARGET_USER):${NC}" >&2
+    local i
+    for i in "${!_opts[@]}"; do
+        echo "  $((i + 1))) ${_opts[$i]}  (${_urls[${_opts[$i]}]})" >&2
+    done
+    echo "  0) Back" >&2
+    echo >&2
+    local sel
+    read -rp "Select (0-${#_opts[@]}): " sel
+    if [[ "$sel" == "0" ]]; then return 1; fi
+    if [[ ! "$sel" =~ ^[0-9]+$ ]] || (( sel < 1 || sel > ${#_opts[@]} )); then
+        echo -e "${RED}Invalid option${NC}" >&2; return 1
+    fi
+    local name="${_opts[$((sel - 1))]}"
+    echo "${name}|${_urls[$name]}"
+}
+
+# Composer (PHP): set or reset the global packagist repository
+set_composer_mirror() {
+    if ! command -v composer >/dev/null 2>&1; then
+        echo -e "${CYAN}Composer is not installed.${NC}"
+        return
+    fi
+    local picked name url
+    picked=$(pick_registry "Select Composer mirror" composer_options composer_urls) || return
+    name="${picked%%|*}"; url="${picked#*|}"
+
+    if [ "$name" = "Reset to Official" ]; then
+        run_as_user composer config -g --unset repos.packagist 2>/dev/null
+        echo -e "${GREEN}Composer reset to official Packagist.${NC}"
+    else
+        run_as_user composer config -g repo.packagist composer "$url"
+        echo -e "${GREEN}Composer mirror set to:${NC} $url"
+    fi
+}
+
+# Go: set the GOPROXY environment / go env value
+set_go_proxy() {
+    if ! command -v go >/dev/null 2>&1; then
+        echo -e "${CYAN}Go is not installed.${NC}"
+        return
+    fi
+    local picked name url
+    picked=$(pick_registry "Select Go module proxy (GOPROXY)" go_proxy_options go_proxy_urls) || return
+    name="${picked%%|*}"; url="${picked#*|}"
+
+    if [ "$name" = "Reset to Official" ]; then
+        run_as_user go env -w GOPROXY="https://proxy.golang.org,direct"
+        echo -e "${GREEN}GOPROXY reset to official.${NC}"
+    else
+        run_as_user go env -w GOPROXY="${url},direct"
+        echo -e "${GREEN}GOPROXY set to:${NC} ${url},direct"
+    fi
+}
+
+# NuGet (.NET): add/replace a package source named "iran-mirror"
+set_nuget_mirror() {
+    if ! command -v dotnet >/dev/null 2>&1; then
+        echo -e "${CYAN}.NET SDK (dotnet) is not installed.${NC}"
+        return
+    fi
+    local picked name url
+    picked=$(pick_registry "Select NuGet mirror" nuget_options nuget_urls) || return
+    name="${picked%%|*}"; url="${picked#*|}"
+
+    local src_name="iran-mirror"
+    # Remove any existing source with our name first (ignore errors)
+    run_as_user dotnet nuget remove source "$src_name" >/dev/null 2>&1
+
+    if [ "$name" = "Reset to Official" ]; then
+        # Ensure the default nuget.org source is enabled
+        run_as_user dotnet nuget enable source nuget.org >/dev/null 2>&1
+        echo -e "${GREEN}NuGet reset — using official nuget.org.${NC}"
+    else
+        run_as_user dotnet nuget add source "$url" --name "$src_name"
+        echo -e "${GREEN}NuGet source added:${NC} $url (name: $src_name)"
+    fi
+}
+
+# Maven / Gradle: write a mirror into the user's ~/.m2/settings.xml
+set_maven_mirror() {
+    local picked name url
+    picked=$(pick_registry "Select Maven mirror" maven_options maven_urls) || return
+    name="${picked%%|*}"; url="${picked#*|}"
+
+    local m2dir="$TARGET_HOME/.m2"
+    local settings="$m2dir/settings.xml"
+    [ -f "$settings" ] && cp "$settings" "${settings}.bak.$(date +%Y%m%d_%H%M%S)"
+
+    if [ "$name" = "Reset to Official" ]; then
+        # Write a settings.xml with no mirror (Maven then uses Maven Central)
+        write_as_user "$settings" <<'EOF'
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <mirrors>
+  </mirrors>
+</settings>
+EOF
+        echo -e "${GREEN}Maven reset — using Maven Central.${NC}"
+    else
+        write_as_user "$settings" <<EOF
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <mirrors>
+    <mirror>
+      <id>iran-mirror</id>
+      <name>Iran Maven Mirror</name>
+      <url>${url}</url>
+      <mirrorOf>central</mirrorOf>
+    </mirror>
+  </mirrors>
+</settings>
+EOF
+        echo -e "${GREEN}Maven mirror set to:${NC} $url"
+        echo -e "${CYAN}(written to ${settings})${NC}"
+    fi
+}
+
+# ---- Package Registries submenu (full set) ----
+
+# registries_menu (full set), extra mirror functions, and main_menu are at the end of the file.
+
+# ---- System package-manager mirrors for non-apt distros + GitHub proxy ----
+
+# Point DNF/YUM (Fedora/Rocky/CentOS) at an Iranian mirror by rewriting baseurls
+set_dnf_mirror() {
+    if [ "$PKG_MANAGER" != "dnf" ] && [ "$PKG_MANAGER" != "yum" ]; then
+        echo -e "${CYAN}DNF/YUM mirror switching only applies to Fedora/Rocky/CentOS systems.${NC}"
+        return
+    fi
+
+    echo
+    echo -e "${CYAN}Select DNF/YUM mirror:${NC}"
+    for i in "${!dnf_mirror_options[@]}"; do
+        name="${dnf_mirror_options[$i]}"
+        echo "  $((i + 1))) $name  (${dnf_mirror_hosts[$name]})"
+    done
+    echo "  0) Back"
+    echo
+    read -rp "Select (0-${#dnf_mirror_options[@]}): " dnf_choice
+
+    if [[ "$dnf_choice" == "0" ]]; then return; fi
+    if [[ ! "$dnf_choice" =~ ^[0-9]+$ ]] || (( dnf_choice < 1 || dnf_choice > ${#dnf_mirror_options[@]} )); then
+        echo -e "${RED}Invalid option${NC}"; return
+    fi
+
+    local name host
+    name="${dnf_mirror_options[$((dnf_choice - 1))]}"
+    host="${dnf_mirror_hosts[$name]}"
+
+    local repodir="/etc/yum.repos.d"
+    if [ ! -d "$repodir" ]; then
+        echo -e "${RED}Error:${NC} $repodir not found."; return
+    fi
+
+    # Back up all repo files once
+    local backup="/etc/yum.repos.d.bak.$(date +%Y%m%d_%H%M%S)"
+    cp -r "$repodir" "$backup"
+    echo -e "${CYAN}Backed up repo files to:${NC} $backup"
+
+    if [ "$name" = "Reset to Official" ]; then
+        echo -e "${CYAN}To fully reset, restore from a backup or reinstall the *-release package.${NC}"
+        echo -e "${CYAN}Re-enabling mirrorlist is distro-specific; no automatic rewrite performed.${NC}"
+        return
+    fi
+
+    # Best-effort: disable mirrorlist lines and repoint baseurl hosts to the mirror.
+    sed -i -E 's|^([[:space:]]*)mirrorlist=|\1#mirrorlist=|' "$repodir"/*.repo 2>/dev/null
+    sed -i -E "s|(baseurl=https?://)[^/]*|\1${host}|g" "$repodir"/*.repo 2>/dev/null
+
+    echo -e "${GREEN}DNF/YUM baseurls repointed to:${NC} $host"
+    echo -e "${CYAN}Refreshing metadata...${NC}"
+    eval "$PKG_UPDATE" || echo -e "${RED}Warning:${NC} metadata refresh failed. Restore from $backup if needed."
+}
+
+# Prepend an Iranian Server line to the Pacman mirrorlist (Arch/Manjaro)
+set_pacman_mirror() {
+    if [ "$PKG_MANAGER" != "pacman" ]; then
+        echo -e "${CYAN}Pacman mirror switching only applies to Arch/Manjaro systems.${NC}"
+        return
+    fi
+
+    echo
+    echo -e "${CYAN}Select Pacman mirror:${NC}"
+    for i in "${!pacman_mirror_options[@]}"; do
+        name="${pacman_mirror_options[$i]}"
+        echo "  $((i + 1))) $name"
+    done
+    echo "  0) Back"
+    echo
+    read -rp "Select (0-${#pacman_mirror_options[@]}): " pac_choice
+
+    if [[ "$pac_choice" == "0" ]]; then return; fi
+    if [[ ! "$pac_choice" =~ ^[0-9]+$ ]] || (( pac_choice < 1 || pac_choice > ${#pacman_mirror_options[@]} )); then
+        echo -e "${RED}Invalid option${NC}"; return
+    fi
+
+    local name url mirrorlist="/etc/pacman.d/mirrorlist"
+    name="${pacman_mirror_options[$((pac_choice - 1))]}"
+    url="${pacman_mirror_urls[$name]}"
+
+    if [ ! -f "$mirrorlist" ]; then
+        echo -e "${RED}Error:${NC} $mirrorlist not found."; return
+    fi
+
+    cp "$mirrorlist" "${mirrorlist}.bak.$(date +%Y%m%d_%H%M%S)"
+
+    # Prepend the chosen Server line so it takes priority
+    local tmp
+    tmp=$(mktemp)
+    {
+        echo "# Added by Iranian Servers Toolkit on $(date)"
+        echo "Server = $url"
+        echo
+        cat "$mirrorlist"
+    } > "$tmp"
+    mv "$tmp" "$mirrorlist"
+
+    echo -e "${GREEN}Pacman mirror added:${NC} $url"
+    echo -e "${CYAN}Refreshing databases...${NC}"
+    pacman -Syy >/dev/null 2>&1 && echo -e "${GREEN}Done.${NC}" || echo -e "${RED}Warning:${NC} pacman -Syy failed."
+}
+
+# Route GitHub traffic through an Iranian proxy using git's insteadOf (reversible)
+set_github_proxy() {
+    if ! command -v git >/dev/null 2>&1; then
+        echo -e "${CYAN}git is not installed.${NC}"
+        return
+    fi
+
+    echo
+    echo -e "${CYAN}Select GitHub proxy (applies for user: $TARGET_USER):${NC}"
+    for i in "${!github_proxy_options[@]}"; do
+        name="${github_proxy_options[$i]}"
+        echo "  $((i + 1))) $name  (${github_proxy_urls[$name]})"
+    done
+    echo "  0) Back"
+    echo
+    read -rp "Select (0-${#github_proxy_options[@]}): " gh_choice
+
+    if [[ "$gh_choice" == "0" ]]; then return; fi
+    if [[ ! "$gh_choice" =~ ^[0-9]+$ ]] || (( gh_choice < 1 || gh_choice > ${#github_proxy_options[@]} )); then
+        echo -e "${RED}Invalid option${NC}"; return
+    fi
+
+    local name url
+    name="${github_proxy_options[$((gh_choice - 1))]}"
+    url="${github_proxy_urls[$name]}"
+
+    if [ "$name" = "Reset to Official" ]; then
+        # Remove any insteadOf rules we may have added for github.com
+        run_as_user git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null
+        run_as_user git config --global --remove-section url."https://scorpian.ir/https://github.com/" 2>/dev/null
+        run_as_user git config --global --remove-section url."https://gitdl.theazizi.ir/https://github.com/" 2>/dev/null
+        echo -e "${GREEN}GitHub proxy reset — using github.com directly.${NC}"
+    else
+        # Clear previous proxy sections first, then set the new one
+        run_as_user git config --global --remove-section url."https://scorpian.ir/https://github.com/" 2>/dev/null
+        run_as_user git config --global --remove-section url."https://gitdl.theazizi.ir/https://github.com/" 2>/dev/null
+        run_as_user git config --global url."$url".insteadOf "https://github.com/"
+        echo -e "${GREEN}GitHub proxy set to:${NC} $url"
+        echo -e "${CYAN}(git clone https://github.com/... will now route through the proxy)${NC}"
+    fi
+}
+
+# ---- Package Registries submenu (full set) ----
+
+registries_menu() {
+    local items=("Set APT Mirror" "Set DNF/YUM Mirror" "Set Pacman Mirror" "Set npm Registry" "Set pip (PyPI) Mirror" "Set Yarn Registry" "Set Composer Mirror" "Set Go Proxy (GOPROXY)" "Set NuGet Mirror" "Set Maven Mirror" "Set GitHub Proxy")
+    while true; do
+        echo
+        echo -e "${CYAN}Package Registries:${NC}"
+        for i in "${!items[@]}"; do echo "  $((i + 1))) ${items[$i]}"; done
+        echo "  0) Back"
+        echo
+        read -rp "Select (0-${#items[@]}): " c
+        case "$c" in
+            1) set_apt_mirror ;;
+            2) set_dnf_mirror ;;
+            3) set_pacman_mirror ;;
+            4) set_npm_registry ;;
+            5) set_pip_mirror ;;
+            6) set_yarn_registry ;;
+            7) set_composer_mirror ;;
+            8) set_go_proxy ;;
+            9) set_nuget_mirror ;;
+            10) set_maven_mirror ;;
+            11) set_github_proxy ;;
             0) return ;;
             *) echo -e "${RED}Invalid choice${NC}" ;;
         esac

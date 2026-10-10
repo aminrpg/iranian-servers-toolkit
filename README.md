@@ -36,7 +36,8 @@ This script wraps all of that into one menu. Pick an option, and it handles the 
 - ⚡ **Auto-pick the fastest mirror** — benchmarks every mirror with `ping` and selects the lowest-latency one.
 - 🩺 **Mirror health test** — checks your configured Docker mirror's latency, HTTP reachability, and a real test pull.
 - 🧩 **Docker Compose installer** — install or update the Compose plugin in one step.
-- 📦 **Package registry mirrors** — point **APT**, **npm**, **Yarn**, and **pip** at fast Iranian mirrors (per-user configs land in the right home, not root's).
+- 📦 **Package registry mirrors** — point **APT, DNF/YUM, Pacman, npm, Yarn, pip, Composer, Go, NuGet, and Maven/Gradle** at fast Iranian mirrors (per-user configs land in the right home, not root's).
+- 🐙 **GitHub proxy** — route `git clone`/fetch through an Iranian GitHub proxy when GitHub is slow or blocked (reversible, via git's `insteadOf`).
 - 🧰 **Server setup toolkit** — one place for the chores every fresh Iranian VPS needs: Tehran timezone + Iranian NTP, swap file, SSH hardening, firewall, base packages, and a full system update.
 - 🧪 **Connectivity doctor** — one check that probes Docker Hub, GitHub, npm, PyPI, and Google, flagging sanction-style `403` blocks.
 - 📡 **DNS benchmark** — pings every resolver, tests which can resolve Docker Hub, and recommends the fastest working one.
@@ -112,9 +113,16 @@ A one-screen dashboard: OS, package manager, kernel, current DNS servers, number
 | Option | What it does |
 |--------|--------------|
 | **Set APT Mirror** | Rewrite `sources.list` to an Iranian mirror (ArvanCloud, IranServer, Pardisco, Ubuntu IR archive), with backup. |
+| **Set DNF/YUM Mirror** | Repoint Fedora/Rocky/CentOS repo `baseurl`s to an Iranian mirror (backs up `/etc/yum.repos.d` first). |
+| **Set Pacman Mirror** | Prepend an Iranian `Server` line to Arch/Manjaro's `/etc/pacman.d/mirrorlist`, with backup. |
 | **Set npm Registry** | Point npm at an Iranian registry (via `npm config` or `~/.npmrc`). |
 | **Set pip (PyPI) Mirror** | Write `~/.config/pip/pip.conf` with an Iranian `index-url` + `trusted-host`. |
 | **Set Yarn Registry** | Point Yarn at an Iranian registry (reuses the npm mirror list). |
+| **Set Composer Mirror** | Point PHP/Composer's Packagist repo at an Iranian mirror (via `composer config -g`). |
+| **Set Go Proxy (GOPROXY)** | Set `GOPROXY` to an Iranian module proxy via `go env -w` (keeps `,direct` fallback). |
+| **Set NuGet Mirror** | Add a `.NET` package source named `iran-mirror` via `dotnet nuget add source`. |
+| **Set Maven Mirror** | Write a `<mirror>` into `~/.m2/settings.xml` for Maven/Gradle, with backup. |
+| **Set GitHub Proxy** | Route `git clone`/fetch through an Iranian GitHub proxy using git's `insteadOf` (fully reversible). |
 
 ### 5 · Server Setup
 
@@ -195,11 +203,20 @@ Available under **Package Registries**. Each writes a backup before changing any
 | Tool | Mirrors offered | Config touched |
 |------|-----------------|----------------|
 | **APT** | ArvanCloud, IranServer, Pardisco, Ubuntu IR Archive | `/etc/apt/sources.list` (or `ubuntu.sources`) |
+| **DNF/YUM** | ArvanCloud, IUT, Zero-One Cloud | `/etc/yum.repos.d/*.repo` |
+| **Pacman** | ArvanCloud, IUT, Zero-One Cloud | `/etc/pacman.d/mirrorlist` |
 | **npm** | Runflare, Kargadan | `npm config` / `~/.npmrc` |
 | **Yarn** | Runflare, Kargadan | `yarn config` |
 | **pip** | Runflare, Kargadan, ArvanCloud | `~/.config/pip/pip.conf` |
+| **Composer** | Liara, Kargadan | `composer config -g` |
+| **Go** | Liara, Kargadan | `go env -w GOPROXY` |
+| **NuGet** | Kargadan, Pardisco | `dotnet nuget` source `iran-mirror` |
+| **Maven/Gradle** | Myket, Kargadan | `~/.m2/settings.xml` |
+| **GitHub** | IranGit, theazizi | git `url.<proxy>.insteadOf` (user config) |
 
-> Mirror hostnames are sourced from the community-maintained [Mirava](https://github.com/MiravaOrg/Mirava) project. If a mirror changes or a better one appears, edit the arrays near the top of `start.sh` (`apt_mirror_hosts`, `npm_registry_urls`, `pip_index_urls`) — see [Contributing](#-contributing).
+> Mirror hostnames are sourced from the community-maintained [Mirava](https://github.com/MiravaOrg/Mirava) project. Each tool's option is skipped gracefully if its CLI (`composer`, `go`, `dotnet`, …) isn't installed, or if the system isn't the matching distro. If a mirror changes or a better one appears, edit the arrays near the top of `start.sh` (e.g. `apt_mirror_hosts`, `dnf_mirror_hosts`, `pacman_mirror_urls`, `github_proxy_urls`, …) — see [Contributing](./CONTRIBUTING.md).
+>
+> **Mirror URL paths** follow each provider's documented conventions; if a provider changes a sub-path, update the matching URL in the array.
 
 ## 🩺 Diagnostics
 
@@ -226,7 +243,8 @@ Available under **Package Registries**. Each writes a backup before changing any
 - `systemd` (`systemctl`) for the Docker service restart step.
 - **Root** access (`sudo`).
 - `curl`, `ping`, and `awk` available (the script installs `curl` automatically if missing).
-- **Optional:** `jq` (cleaner Docker-proxy reset), `nslookup` or `dig` (DNS-benchmark resolution test), and `npm`/`yarn`/`pip` for those registry options. The script degrades gracefully when they're missing.
+- **Bash 4.3+** (for the registry selectors). Standard on all modern Linux servers.
+- **Optional:** `jq` (cleaner Docker-proxy reset), `nslookup` or `dig` (DNS-benchmark resolution test), and the relevant CLI for each registry option (`npm`, `yarn`, `pip`, `composer`, `go`, `dotnet`, `mvn`). The script skips any option whose tool is missing.
 
 > The official `get.docker.com` installer supports the major distros above. If you're on an unsupported distro, the script will tell you and skip the install rather than guess.
 

@@ -60,6 +60,17 @@ declare -A npm_registry_urls=( ... ["YourMirror"]="https://npm.example.ir/" )
 # pip (full index URL ending in /simple)
 pip_index_options=( ... "YourMirror" "Reset to Official")
 declare -A pip_index_urls=( ... ["YourMirror"]="https://pypi.example.ir/simple" )
+
+# Composer / Go / NuGet / Maven (full URLs) — same options + map pattern:
+#   composer_options / composer_urls
+#   go_proxy_options / go_proxy_urls
+#   nuget_options    / nuget_urls         (v3 index URL ending in /index.json)
+#   maven_options    / maven_urls         (repository base URL)
+
+# System package managers for non-apt distros + GitHub proxy:
+#   dnf_mirror_options    / dnf_mirror_hosts     (host only; Fedora/Rocky/CentOS)
+#   pacman_mirror_options / pacman_mirror_urls   (full Server= URL with $repo/$arch)
+#   github_proxy_options  / github_proxy_urls    (proxy prefix ending in /https://github.com/)
 ```
 
 > Prefer mirrors hosted inside Iran and reachable without a VPN. A good source of candidates is the [Mirava](https://github.com/MiravaOrg/Mirava) list.

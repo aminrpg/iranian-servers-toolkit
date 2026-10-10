@@ -38,7 +38,8 @@
 - ⚡ **انتخاب خودکار سریع‌ترین میرور** — بنچمارک همه‌ی میرورها با `ping` و انتخاب کم‌تأخیرترین.
 - 🩺 **تست سلامت میرور** — بررسی تأخیر، دسترس‌پذیری HTTP و یک pull واقعی برای میرور تنظیم‌شده.
 - 🧩 **نصب Docker Compose** — نصب یا به‌روزرسانی افزونه‌ی Compose در یک مرحله.
-- 📦 **میرورهای رجیستری پکیج‌ها** — تنظیم **APT**، **npm**، **Yarn** و **pip** روی میرورهای سریع ایرانی (پیکربندی هر کاربر در خانه‌ی خودش قرار می‌گیرد، نه root).
+- 📦 **میرورهای رجیستری پکیج‌ها** — تنظیم **APT، DNF/YUM، Pacman، npm، Yarn، pip، Composer، Go، NuGet و Maven/Gradle** روی میرورهای سریع ایرانی (پیکربندی هر کاربر در خانه‌ی خودش قرار می‌گیرد، نه root).
+- 🐙 **پروکسی گیت‌هاب** — عبور `git clone`/fetch از یک پروکسی گیت‌هاب ایرانی وقتی گیت‌هاب کند یا مسدود است (برگشت‌پذیر، با `insteadOf` گیت).
 - 🧰 **جعبه‌ابزار راه‌اندازی سرور** — یکجا برای کارهای همیشگی هر VPS تازه‌ی ایرانی: Timezone تهران + NTP ایرانی، فایل Swap، سخت‌سازی SSH، فایروال، پکیج‌های پایه و به‌روزرسانی کامل سیستم.
 - 🧪 **دکتر اتصال** — یک بررسی که Docker Hub، GitHub، npm، PyPI و Google را آزمایش می‌کند و بلاک‌های تحریمی `403` را مشخص می‌کند.
 - 📡 **بنچمارک DNS** — پینگ همه‌ی ریزالورها، تست توانایی resolve کردن Docker Hub و پیشنهاد سریع‌ترین گزینه‌ی سالم.
@@ -130,9 +131,16 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 | گزینه | کارکرد |
 |--------|--------------|
 | **Set APT Mirror** | بازنویسی `sources.list` به یک میرور ایرانی (ArvanCloud، IranServer، Pardisco، آرشیو Ubuntu IR) با پشتیبان‌گیری. |
+| **Set DNF/YUM Mirror** | تغییر `baseurl` مخازن فدورا/راکی/CentOS به یک میرور ایرانی (ابتدا پشتیبان `/etc/yum.repos.d`). |
+| **Set Pacman Mirror** | افزودن خط `Server` ایرانی به ابتدای `/etc/pacman.d/mirrorlist` در آرچ/منجارو با پشتیبان‌گیری. |
 | **Set npm Registry** | تنظیم رجیستری npm روی یک میرور ایرانی (با `npm config` یا `~/.npmrc`). |
 | **Set pip (PyPI) Mirror** | نوشتن `~/.config/pip/pip.conf` با `index-url` ایرانی و `trusted-host`. |
 | **Set Yarn Registry** | تنظیم رجیستری Yarn روی یک میرور ایرانی (از همان فهرست npm). |
+| **Set Composer Mirror** | اتصال مخزن Packagist در Composer (PHP) به یک میرور ایرانی (با `composer config -g`). |
+| **Set Go Proxy (GOPROXY)** | تنظیم `GOPROXY` روی یک پروکسی ماژول ایرانی با `go env -w` (با حفظ `,direct`). |
+| **Set NuGet Mirror** | افزودن یک source دات‌نت با نام `iran-mirror` از طریق `dotnet nuget add source`. |
+| **Set Maven Mirror** | نوشتن یک `<mirror>` در `~/.m2/settings.xml` برای Maven/Gradle با پشتیبان‌گیری. |
+| **Set GitHub Proxy** | عبور `git clone`/fetch از یک پروکسی گیت‌هاب ایرانی با `insteadOf` گیت (کاملاً برگشت‌پذیر). |
 
 ### ۵ · راه‌اندازی سرور (Server Setup)
 
@@ -233,11 +241,18 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 | ابزار | میرورهای ارائه‌شده | فایل تغییریافته |
 |------|-----------------|----------------|
 | **APT** | ArvanCloud، IranServer، Pardisco، آرشیو Ubuntu IR | `/etc/apt/sources.list` (یا `ubuntu.sources`) |
+| **DNF/YUM** | ArvanCloud، IUT، Zero-One Cloud | `/etc/yum.repos.d/*.repo` |
+| **Pacman** | ArvanCloud، IUT، Zero-One Cloud | `/etc/pacman.d/mirrorlist` |
 | **npm** | Runflare، Kargadan | `npm config` / `~/.npmrc` |
 | **Yarn** | Runflare، Kargadan | `yarn config` |
 | **pip** | Runflare، Kargadan، ArvanCloud | `~/.config/pip/pip.conf` |
+| **Composer** | Liara، Kargadan | `composer config -g` |
+| **Go** | Liara، Kargadan | `go env -w GOPROXY` |
+| **NuGet** | Kargadan، Pardisco | source دات‌نت با نام `iran-mirror` |
+| **Maven/Gradle** | Myket، Kargadan | `~/.m2/settings.xml` |
+| **GitHub** | IranGit، theazizi | گیت `url.<proxy>.insteadOf` (پیکربندی کاربر) |
 
-> نام میزبان میرورها از پروژه‌ی جامعه‌محور [Mirava](https://github.com/MiravaOrg/Mirava) گرفته شده است. برای تغییر یا افزودن میرور، آرایه‌های بالای `start.sh` را ویرایش کنید — به [راهنمای مشارکت](./CONTRIBUTING.fa.md) نگاه کنید.
+> نام میزبان میرورها از پروژه‌ی جامعه‌محور [Mirava](https://github.com/MiravaOrg/Mirava) گرفته شده است. اگر ابزار مربوط (`composer`، `go`، `dotnet` و…) نصب نباشد یا سیستم توزیع متناظر نباشد، آن گزینه به‌آرامی رد می‌شود. برای تغییر یا افزودن میرور، آرایه‌های بالای `start.sh` را ویرایش کنید — به [راهنمای مشارکت](./CONTRIBUTING.fa.md) نگاه کنید.
 
 ## 🩺 تشخیص
 
@@ -255,7 +270,8 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 - وجود `systemd` (`systemctl`) برای مرحله‌ی ری‌استارت سرویس Docker.
 - دسترسی **root** (`sudo`).
 - در دسترس بودن `curl`، `ping` و `awk` (اسکریپت در صورت نبود `curl` آن را خودکار نصب می‌کند).
-- **اختیاری:** `jq` (ریست تمیزتر پراکسی Docker)، `nslookup` یا `dig` (تست resolve در بنچمارک DNS) و `npm`/`yarn`/`pip` برای گزینه‌های مربوطه. اسکریپت در نبود این‌ها به‌آرامی کار می‌کند.
+- **Bash نسخه‌ی ۴٫۳ به بالا** (برای انتخابگر رجیستری‌ها). روی همه‌ی سرورهای مدرن لینوکس استاندارد است.
+- **اختیاری:** `jq` (ریست تمیزتر پراکسی Docker)، `nslookup` یا `dig` (تست resolve در بنچمارک DNS) و ابزار مربوط به هر رجیستری (`npm`، `yarn`، `pip`، `composer`، `go`، `dotnet`، `mvn`). اسکریپت هر گزینه‌ای که ابزارش نصب نباشد را رد می‌کند.
 
 > نصب‌کننده‌ی رسمی `get.docker.com` از توزیع‌های اصلی بالا پشتیبانی می‌کند. روی توزیع پشتیبانی‌نشده، اسکریپت اطلاع می‌دهد و نصب را رد می‌کند.
 

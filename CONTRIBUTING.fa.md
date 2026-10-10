@@ -80,6 +80,17 @@ declare -A npm_registry_urls=( ... ["YourMirror"]="https://npm.example.ir/" )
 # pip (URL کامل index که به /simple ختم می‌شود)
 pip_index_options=( ... "YourMirror" "Reset to Official")
 declare -A pip_index_urls=( ... ["YourMirror"]="https://pypi.example.ir/simple" )
+
+# Composer / Go / NuGet / Maven (URL کامل) — همان الگوی فهرست گزینه + نگاشت:
+#   composer_options / composer_urls
+#   go_proxy_options / go_proxy_urls
+#   nuget_options    / nuget_urls         (URL ایندکس v3 که به /index.json ختم می‌شود)
+#   maven_options    / maven_urls         (URL پایه‌ی مخزن)
+
+# پکیج‌منیجرهای سیستمی غیر از apt + پروکسی گیت‌هاب:
+#   dnf_mirror_options    / dnf_mirror_hosts     (فقط host؛ فدورا/راکی/CentOS)
+#   pacman_mirror_options / pacman_mirror_urls   (URL کامل Server= با $repo/$arch)
+#   github_proxy_options  / github_proxy_urls    (پیشوند پروکسی که به /https://github.com/ ختم می‌شود)
 ```
 
 <div dir="rtl">
