@@ -101,7 +101,13 @@ write_as_user() {
 }
 
 # Main menu options (top-level categories)
-main_menu_items=("Show Status" "DNS Tools" "Docker Tools" "Package Registries" "Diagnostics" "Exit")
+main_menu_items=("Show Status" "DNS Tools" "Docker Tools" "Package Registries" "Server Setup" "Diagnostics" "Exit")
+
+# Iranian NTP servers for time sync
+ntp_servers=("ntp.day.ir" "ir.pool.ntp.org" "0.ir.pool.ntp.org")
+
+# Base packages installed by the "Install Base Packages" option
+base_packages=("curl" "wget" "git" "vim" "htop" "unzip" "ca-certificates" "nano" "net-tools")
 
 # ---- Mirror data (sourced from the Mirava project: github.com/MiravaOrg/Mirava) ----
 
@@ -922,6 +928,291 @@ diagnostics_menu() {
     done
 }
 
+
+# ---- Server Setup functions ----
+
+# Set timezone to Asia/Tehran and enable NTP time sync
+set_timezone_tehran() {
+    echo
+    echo -e "${CYAN}Setting timezone to Asia/Tehran...${NC}"
+
+    if command -v timedatectl >/dev/null 2>&1; then
+        if timedatectl set-timezone Asia/Tehran; then
+            echo -e "${GREEN}Timezone set to Asia/Tehran${NC}"
+        else
+            echo -e "${RED}Error:${NC} Failed to set timezone via timedatectl."
+        fi
+        # Enable NTP sync
+        timedatectl set-ntp true 2>/dev/null
+    else
+        # Fallback for systems without systemd
+        if [ -f /usr/share/zoneinfo/Asia/Tehran ]; then
+            ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
+            echo "Asia/Tehran" > /etc/timezone 2>/dev/null
+            echo -e "${GREEN}Timezone set to Asia/Tehran (via symlink)${NC}"
+        else
+            echo -e "${RED}Error:${NC} Timezone data not found."
+            return 1
+        fi
+    fi
+
+    # Configure an Iranian NTP server if a client is available
+    local ntp_primary="${ntp_servers[0]}"
+    if command -v timedatectl >/dev/null 2>&1 && [ -d /etc/systemd ]; then
+        mkdir -p /etc/systemd
+        if [ -f /etc/systemd/timesyncd.conf ]; then
+            cp /etc/systemd/timesyncd.conf "/etc/systemd/timesyncd.conf.bak.$(date +%Y%m%d_%H%M%S)"
+        fi
+        {
+            echo "[Time]"
+            echo "NTP=${ntp_servers[*]}"
+        } > /etc/systemd/timesyncd.conf
+        systemctl restart systemd-timesyncd 2>/dev/null
+        echo -e "${GREEN}NTP servers set to:${NC} ${ntp_servers[*]}"
+    else
+        echo -e "${CYAN}Tip:${NC} install an NTP client and point it at $ntp_primary"
+    fi
+
+    echo -e "${GREEN}Current time:${NC} $(date)"
+}
+
+# Create and enable a swap file (helpful on low-RAM Iranian VPSes)
+setup_swap() {
+    # If swap is already active, report and offer to continue
+    if swapon --show 2>/dev/null | grep -q .; then
+        echo -e "${CYAN}Swap is already active:${NC}"
+        swapon --show
+        read -rp "Create an additional swap file anyway? (y/N): " cont
+        [[ "$cont" =~ ^[Yy]$ ]] || return
+    fi
+
+    echo
+    read -rp "Swap size in GB (e.g. 2) [0 to cancel]: " swap_gb
+    if [[ ! "$swap_gb" =~ ^[0-9]+$ ]] || [ "$swap_gb" -eq 0 ]; then
+        echo -e "${CYAN}Cancelled.${NC}"; return
+    fi
+
+    local swapfile="/swapfile"
+    if [ -e "$swapfile" ]; then
+        swapfile="/swapfile.$(date +%s)"
+    fi
+
+    echo -e "${CYAN}Creating ${swap_gb}G swap file at ${swapfile}...${NC}"
+
+    # Prefer fallocate; fall back to dd
+    if command -v fallocate >/dev/null 2>&1 && fallocate -l "${swap_gb}G" "$swapfile" 2>/dev/null; then
+        :
+    else
+        echo -e "${CYAN}fallocate unavailable, using dd (slower)...${NC}"
+        if ! dd if=/dev/zero of="$swapfile" bs=1M count=$((swap_gb * 1024)) status=none; then
+            echo -e "${RED}Error:${NC} Failed to allocate swap file."
+            rm -f "$swapfile"
+            return 1
+        fi
+    fi
+
+    chmod 600 "$swapfile"
+    if ! mkswap "$swapfile" >/dev/null 2>&1; then
+        echo -e "${RED}Error:${NC} mkswap failed."; rm -f "$swapfile"; return 1
+    fi
+    if ! swapon "$swapfile"; then
+        echo -e "${RED}Error:${NC} swapon failed."; rm -f "$swapfile"; return 1
+    fi
+
+    # Persist across reboots
+    if ! grep -q "^$swapfile " /etc/fstab 2>/dev/null; then
+        cp /etc/fstab "/etc/fstab.bak.$(date +%Y%m%d_%H%M%S)"
+        echo "$swapfile none swap sw 0 0" >> /etc/fstab
+    fi
+
+    echo -e "${GREEN}Swap enabled:${NC}"
+    swapon --show
+}
+
+# Harden SSH: optionally change port, disable password auth, add a public key.
+# High-risk: a wrong setting can lock you out, so we confirm and never disable
+# password auth unless a usable key is present.
+harden_ssh() {
+    local sshd_config="/etc/ssh/sshd_config"
+    if [ ! -f "$sshd_config" ]; then
+        echo -e "${RED}Error:${NC} $sshd_config not found. Is OpenSSH server installed?"
+        return 1
+    fi
+
+    echo
+    echo -e "${RED}============== WARNING ==============${NC}"
+    echo -e "SSH hardening can ${RED}lock you out${NC} of this server if misconfigured."
+    echo -e "Keep your current SSH session open and test a NEW connection before closing it."
+    echo -e "${RED}====================================${NC}"
+    read -rp "Continue? (y/N): " go
+    [[ "$go" =~ ^[Yy]$ ]] || { echo -e "${CYAN}Cancelled.${NC}"; return; }
+
+    # Always back up first
+    cp "$sshd_config" "${sshd_config}.bak.$(date +%Y%m%d_%H%M%S)"
+
+    # 1) Optionally add a public key for the target user
+    read -rp "Paste a public SSH key to authorize (blank to skip): " pubkey
+    if [ -n "$pubkey" ]; then
+        local ssh_dir="$TARGET_HOME/.ssh"
+        mkdir -p "$ssh_dir"
+        echo "$pubkey" >> "$ssh_dir/authorized_keys"
+        chmod 700 "$ssh_dir"; chmod 600 "$ssh_dir/authorized_keys"
+        [ "$TARGET_USER" != "root" ] && chown -R "$TARGET_USER" "$ssh_dir"
+        echo -e "${GREEN}Key added to${NC} $ssh_dir/authorized_keys"
+    fi
+
+    # 2) Optionally change the SSH port
+    read -rp "New SSH port (blank to keep current): " new_port
+    if [[ "$new_port" =~ ^[0-9]+$ ]] && (( new_port >= 1 && new_port <= 65535 )); then
+        if grep -qE '^\s*#?\s*Port\s+' "$sshd_config"; then
+            sed -i -E "s/^\s*#?\s*Port\s+.*/Port $new_port/" "$sshd_config"
+        else
+            echo "Port $new_port" >> "$sshd_config"
+        fi
+        echo -e "${GREEN}SSH port set to:${NC} $new_port"
+        echo -e "${RED}Remember to open port $new_port in your firewall before reconnecting!${NC}"
+    fi
+
+    # 3) Optionally disable password authentication (only if a key exists)
+    local keyfile="$TARGET_HOME/.ssh/authorized_keys"
+    if [ -s "$keyfile" ]; then
+        read -rp "Disable password authentication (key-only login)? (y/N): " nopass
+        if [[ "$nopass" =~ ^[Yy]$ ]]; then
+            if grep -qE '^\s*#?\s*PasswordAuthentication\s+' "$sshd_config"; then
+                sed -i -E "s/^\s*#?\s*PasswordAuthentication\s+.*/PasswordAuthentication no/" "$sshd_config"
+            else
+                echo "PasswordAuthentication no" >> "$sshd_config"
+            fi
+            echo -e "${GREEN}Password authentication disabled.${NC}"
+        fi
+    else
+        echo -e "${CYAN}No authorized key found — leaving password auth enabled (safer).${NC}"
+    fi
+
+    # Validate config before restarting to avoid breaking SSH
+    if command -v sshd >/dev/null 2>&1 && ! sshd -t 2>/dev/null; then
+        echo -e "${RED}Error:${NC} sshd config test failed. Restoring backup."
+        cp "$(ls -1t ${sshd_config}.bak.* | head -1)" "$sshd_config"
+        return 1
+    fi
+
+    echo -e "${CYAN}Restarting SSH service...${NC}"
+    systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null
+    echo -e "${GREEN}Done.${NC} Test a new SSH session now, before closing this one."
+}
+
+# Set up a basic firewall (UFW on Debian/Ubuntu, firewalld on RHEL family)
+setup_firewall() {
+    echo
+    echo -e "${CYAN}Firewall setup${NC}"
+    echo -e "This will allow SSH (22), HTTP (80), HTTPS (443) and enable the firewall."
+    read -rp "Also allow a custom SSH port? (blank to skip): " custom_ssh
+
+    if command -v ufw >/dev/null 2>&1; then
+        echo -e "${CYAN}Configuring UFW...${NC}"
+        ufw allow 22/tcp
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        if [[ "$custom_ssh" =~ ^[0-9]+$ ]]; then ufw allow "${custom_ssh}/tcp"; fi
+        # --force avoids the interactive y/n prompt
+        ufw --force enable
+        echo -e "${GREEN}UFW enabled.${NC}"
+        ufw status verbose
+    elif command -v firewall-cmd >/dev/null 2>&1; then
+        echo -e "${CYAN}Configuring firewalld...${NC}"
+        systemctl enable --now firewalld 2>/dev/null
+        firewall-cmd --permanent --add-service=ssh
+        firewall-cmd --permanent --add-service=http
+        firewall-cmd --permanent --add-service=https
+        if [[ "$custom_ssh" =~ ^[0-9]+$ ]]; then firewall-cmd --permanent --add-port="${custom_ssh}/tcp"; fi
+        firewall-cmd --reload
+        echo -e "${GREEN}firewalld configured.${NC}"
+        firewall-cmd --list-all
+    else
+        # Offer to install UFW via the detected package manager
+        if [ "$PKG_MANAGER" = "unknown" ]; then
+            echo -e "${RED}No firewall tool found and no known package manager to install one.${NC}"
+            return 1
+        fi
+        read -rp "No firewall found. Install UFW now? (y/N): " inst
+        if [[ "$inst" =~ ^[Yy]$ ]]; then
+            eval "$PKG_UPDATE" >/dev/null 2>&1
+            eval "$PKG_INSTALL ufw" && setup_firewall
+        fi
+    fi
+}
+
+# Install a set of commonly needed base packages
+install_base_packages() {
+    if [ "$PKG_MANAGER" = "unknown" ]; then
+        echo -e "${RED}Error:${NC} Unsupported distro — no known package manager."
+        return 1
+    fi
+
+    echo -e "${CYAN}Installing base packages:${NC} ${base_packages[*]}"
+    eval "$PKG_UPDATE" >/dev/null 2>&1
+
+    local failed=()
+    for pkg in "${base_packages[@]}"; do
+        printf "  %-18s " "$pkg"
+        if eval "$PKG_INSTALL $pkg" >/dev/null 2>&1; then
+            echo -e "${GREEN}ok${NC}"
+        else
+            echo -e "${RED}failed${NC}"
+            failed+=("$pkg")
+        fi
+    done
+
+    if [ ${#failed[@]} -eq 0 ]; then
+        echo -e "${GREEN}All base packages installed.${NC}"
+    else
+        echo -e "${CYAN}Finished with some failures:${NC} ${failed[*]}"
+        echo -e "(Some package names differ per distro; install those manually if needed.)"
+    fi
+}
+
+# Full system update/upgrade via the detected package manager
+full_system_update() {
+    if [ "$PKG_MANAGER" = "unknown" ]; then
+        echo -e "${RED}Error:${NC} Unsupported distro — no known package manager."
+        return 1
+    fi
+
+    echo -e "${CYAN}Updating package lists...${NC}"
+    eval "$PKG_UPDATE" || { echo -e "${RED}Update failed.${NC}"; return 1; }
+
+    echo -e "${CYAN}Upgrading installed packages (this may take a while)...${NC}"
+    if eval "$PKG_UPGRADE"; then
+        echo -e "${GREEN}System upgrade complete.${NC}"
+    else
+        echo -e "${RED}Upgrade reported errors.${NC} Review the output above."
+    fi
+}
+
+# ---- Server Setup submenu ----
+
+server_setup_menu() {
+    local items=("Set Timezone & NTP (Tehran)" "Create / Enable Swap" "Harden SSH" "Setup Firewall" "Install Base Packages" "Full System Update")
+    while true; do
+        echo
+        echo -e "${CYAN}Server Setup:${NC}"
+        for i in "${!items[@]}"; do echo "  $((i + 1))) ${items[$i]}"; done
+        echo "  0) Back"
+        echo
+        read -rp "Select (0-${#items[@]}): " c
+        case "$c" in
+            1) set_timezone_tehran ;;
+            2) setup_swap ;;
+            3) harden_ssh ;;
+            4) setup_firewall ;;
+            5) install_base_packages ;;
+            6) full_system_update ;;
+            0) return ;;
+            *) echo -e "${RED}Invalid choice${NC}" ;;
+        esac
+    done
+}
+
 # Main Menu and Program Entry Point
 main_menu() {
     while true; do
@@ -938,8 +1229,9 @@ main_menu() {
             2) dns_menu ;;
             3) docker_menu ;;
             4) registries_menu ;;
-            5) diagnostics_menu ;;
-            6) echo -e "${CYAN}Bye.${NC}"; exit 0 ;;
+            5) server_setup_menu ;;
+            6) diagnostics_menu ;;
+            7) echo -e "${CYAN}Bye.${NC}"; exit 0 ;;
             *) echo -e "${RED}Invalid choice${NC}" ;;
         esac
     done

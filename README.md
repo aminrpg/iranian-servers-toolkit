@@ -37,6 +37,7 @@ This script wraps all of that into one menu. Pick an option, and it handles the 
 - 🩺 **Mirror health test** — checks your configured Docker mirror's latency, HTTP reachability, and a real test pull.
 - 🧩 **Docker Compose installer** — install or update the Compose plugin in one step.
 - 📦 **Package registry mirrors** — point **APT**, **npm**, **Yarn**, and **pip** at fast Iranian mirrors (per-user configs land in the right home, not root's).
+- 🧰 **Server setup toolkit** — one place for the chores every fresh Iranian VPS needs: Tehran timezone + Iranian NTP, swap file, SSH hardening, firewall, base packages, and a full system update.
 - 🧪 **Connectivity doctor** — one check that probes Docker Hub, GitHub, npm, PyPI, and Google, flagging sanction-style `403` blocks.
 - 📡 **DNS benchmark** — pings every resolver, tests which can resolve Docker Hub, and recommends the fastest working one.
 - 🗂️ **Organized submenus** — tidy categories (DNS, Docker, Package Registries, Diagnostics) instead of one long list.
@@ -79,8 +80,9 @@ The toolkit is organized into a main menu with category submenus:
   2) DNS Tools
   3) Docker Tools
   4) Package Registries
-  5) Diagnostics
-  6) Exit
+  5) Server Setup
+  6) Diagnostics
+  7) Exit
 ```
 
 ### 1 · Show Status
@@ -114,7 +116,22 @@ A one-screen dashboard: OS, package manager, kernel, current DNS servers, number
 | **Set pip (PyPI) Mirror** | Write `~/.config/pip/pip.conf` with an Iranian `index-url` + `trusted-host`. |
 | **Set Yarn Registry** | Point Yarn at an Iranian registry (reuses the npm mirror list). |
 
-### 5 · Diagnostics
+### 5 · Server Setup
+
+Common first-run chores for a fresh server. The riskier ones confirm before acting and back up every file they touch.
+
+| Option | What it does |
+|--------|--------------|
+| **Set Timezone & NTP (Tehran)** | Set the timezone to `Asia/Tehran` and point time sync at Iranian NTP servers (`ntp.day.ir`, `ir.pool.ntp.org`). |
+| **Create / Enable Swap** | Create a swap file of your chosen size, enable it, and persist it in `/etc/fstab` (backs up fstab first). |
+| **Harden SSH** | Optionally change the SSH port, add a public key, and disable password auth — with a lockout warning, config test (`sshd -t`), and automatic backup/restore. |
+| **Setup Firewall** | Configure UFW (Debian/Ubuntu) or firewalld (RHEL family) to allow SSH/HTTP/HTTPS and enable it; offers to install UFW if none is found. |
+| **Install Base Packages** | Install common tools: `curl wget git vim htop unzip ca-certificates nano net-tools`. |
+| **Full System Update** | Refresh package lists and upgrade all installed packages via the detected package manager. |
+
+> ⚠️ **Harden SSH** and **Setup Firewall** change remote-access settings. Keep your current SSH session open and test a **new** connection before closing it — and open your new SSH port in the firewall before switching.
+
+### 6 · Diagnostics
 
 | Option | What it does |
 |--------|--------------|
@@ -201,6 +218,7 @@ Available under **Package Registries**. Each writes a backup before changing any
 - **Registry mirror** — writes `/etc/docker/daemon.json` and restarts the Docker daemon. The auto-select mode uses `ping` + `awk` to compare float latencies across all mirrors; the reset path uses `jq` when available (falling back to an empty config) and backs up `daemon.json` first.
 - **APT mirror** — `set_apt_mirror()` detects the classic `sources.list` or the newer deb822 `ubuntu.sources`, backs it up, and `sed`-rewrites known upstream hosts to the chosen Iranian mirror before running `apt-get update`.
 - **Diagnostics** — the connectivity doctor and DNS benchmark are read-only (they change no config); they only probe endpoints and report.
+- **Server setup** — timezone/NTP use `timedatectl` (with a symlink fallback), swap uses `fallocate` (falling back to `dd`) and persists via `/etc/fstab`, SSH hardening edits `sshd_config` behind a confirmation and validates with `sshd -t` before restarting, and firewall setup auto-selects UFW or firewalld. Every file touched is backed up first.
 
 ## ✅ Requirements
 
