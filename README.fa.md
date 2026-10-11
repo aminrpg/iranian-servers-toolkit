@@ -80,7 +80,7 @@ sudo ./start.sh
 </div>
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-servers-toolkit/main/start.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-servers-toolkit/master/start.sh)"
 ```
 
 <div dir="rtl">

@@ -68,7 +68,7 @@ sudo ./start.sh
 If you just want to run it without keeping the repo around:
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-servers-toolkit/main/start.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-servers-toolkit/master/start.sh)"
 ```
 
 ## 🧭 Menu Structure
