@@ -7,6 +7,7 @@
 RED='\033[1;31m'
 GREEN='\033[1;32m'
 CYAN='\033[1;36m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Check if script is running with root privileges
@@ -100,8 +101,8 @@ write_as_user() {
     fi
 }
 
-# Main menu options (top-level categories)
-main_menu_items=("Show Status" "DNS Tools" "Docker Tools" "Package Registries" "Server Setup" "Diagnostics" "Exit")
+# Main menu options (top-level categories). "Exit" is option 0, handled separately.
+main_menu_items=("Show Status" "DNS Tools" "Docker Tools" "Package Registries" "Server Setup" "Diagnostics")
 
 # Iranian NTP servers for time sync
 ntp_servers=("ntp.day.ir" "ir.pool.ntp.org" "0.ir.pool.ntp.org")
@@ -374,20 +375,130 @@ show_status() {
             echo -e "${GREEN}Docker:${NC}          installed (daemon not responding)"
         fi
 
-        # Extract registry-mirrors from daemon.json if present
+        # Extract registry-mirrors from daemon.json if present.
+        # A configured mirror means the Docker proxy has been CHANGED from
+        # the default, so flag it clearly and use a distinct color.
+        local mirror=""
         if [ -f /etc/docker/daemon.json ]; then
-            local mirror
             mirror=$(grep -oE 'https?://[^"]+' /etc/docker/daemon.json 2>/dev/null | paste -sd ', ' -)
-            if [ -n "$mirror" ]; then
-                echo -e "${GREEN}Docker mirror:${NC}   $mirror"
-            else
-                echo -e "${GREEN}Docker mirror:${NC}   ${CYAN}none configured${NC}"
-            fi
+        fi
+        if [ -n "$mirror" ]; then
+            echo -e "${GREEN}Docker Proxy:${NC}    ${YELLOW}CHANGED${NC} -> ${YELLOW}${mirror}${NC}"
         else
-            echo -e "${GREEN}Docker mirror:${NC}   ${CYAN}none configured${NC}"
+            echo -e "${GREEN}Docker Proxy:${NC}    ${CYAN}default (none configured)${NC}"
         fi
     else
         echo -e "${GREEN}Docker:${NC}          ${RED}not installed${NC}"
+    fi
+
+    # Package registries: show only the ones that have been changed from
+    # their defaults. Each line is highlighted so changes stand out.
+    echo
+    echo -e "${GREEN}Package Registries:${NC}"
+    local changed=0
+
+    # npm registry (~/.npmrc)
+    local npmrc="$TARGET_HOME/.npmrc" npm_reg=""
+    if [ -f "$npmrc" ]; then
+        npm_reg=$(grep -E '^\s*registry\s*=' "$npmrc" 2>/dev/null | tail -1 | sed -E 's/^\s*registry\s*=\s*//')
+    fi
+    if [ -n "$npm_reg" ] && [[ "$npm_reg" != *"registry.npmjs.org"* ]]; then
+        echo -e "  ${YELLOW}npm:${NC}       ${YELLOW}CHANGED${NC} -> $npm_reg"
+        changed=$((changed + 1))
+    fi
+
+    # pip index (~/.config/pip/pip.conf)
+    local pipconf="$TARGET_HOME/.config/pip/pip.conf" pip_idx=""
+    if [ -f "$pipconf" ]; then
+        pip_idx=$(grep -E '^\s*index-url\s*=' "$pipconf" 2>/dev/null | tail -1 | sed -E 's/^\s*index-url\s*=\s*//')
+    fi
+    if [ -n "$pip_idx" ] && [[ "$pip_idx" != *"pypi.org"* ]]; then
+        echo -e "  ${YELLOW}pip:${NC}       ${YELLOW}CHANGED${NC} -> $pip_idx"
+        changed=$((changed + 1))
+    fi
+
+    # Maven mirror (~/.m2/settings.xml)
+    local m2="$TARGET_HOME/.m2/settings.xml" mvn_url=""
+    if [ -f "$m2" ]; then
+        mvn_url=$(grep -oE '<url>[^<]+</url>' "$m2" 2>/dev/null | head -1 | sed -E 's#</?url>##g')
+    fi
+    if [ -n "$mvn_url" ] && [[ "$mvn_url" != *"repo1.maven.org"* ]]; then
+        echo -e "  ${YELLOW}Maven:${NC}     ${YELLOW}CHANGED${NC} -> $mvn_url"
+        changed=$((changed + 1))
+    fi
+
+    # Composer global repo (~/.config/composer/config.json or ~/.composer/config.json)
+    local comp_url=""
+    for comp_cfg in "$TARGET_HOME/.config/composer/config.json" "$TARGET_HOME/.composer/config.json"; do
+        if [ -f "$comp_cfg" ]; then
+            comp_url=$(grep -oE 'https?://[^"]+' "$comp_cfg" 2>/dev/null | grep -v 'packagist.org' | head -1)
+            [ -n "$comp_url" ] && break
+        fi
+    done
+    if [ -n "$comp_url" ]; then
+        echo -e "  ${YELLOW}Composer:${NC}  ${YELLOW}CHANGED${NC} -> $comp_url"
+        changed=$((changed + 1))
+    fi
+
+    # Go proxy (go env GOPROXY)
+    if command -v go >/dev/null 2>&1; then
+        local goproxy
+        goproxy=$(run_as_user go env GOPROXY 2>/dev/null)
+        if [ -n "$goproxy" ] && [[ "$goproxy" != *"proxy.golang.org"* ]]; then
+            echo -e "  ${YELLOW}Go:${NC}        ${YELLOW}CHANGED${NC} -> $goproxy"
+            changed=$((changed + 1))
+        fi
+    fi
+
+    # NuGet mirror (our named "iran-mirror" source in NuGet.Config)
+    local nuget_cfg="" nuget_url=""
+    for nc in "$TARGET_HOME/.nuget/NuGet/NuGet.Config" "$TARGET_HOME/.config/NuGet/NuGet.Config"; do
+        [ -f "$nc" ] && nuget_cfg="$nc" && break
+    done
+    if [ -n "$nuget_cfg" ]; then
+        nuget_url=$(grep -i 'iran-mirror' "$nuget_cfg" 2>/dev/null | grep -oE 'https?://[^"]+' | head -1)
+    fi
+    if [ -n "$nuget_url" ]; then
+        echo -e "  ${YELLOW}NuGet:${NC}     ${YELLOW}CHANGED${NC} -> $nuget_url"
+        changed=$((changed + 1))
+    fi
+
+    # GitHub proxy (git insteadOf rule for github.com)
+    if command -v git >/dev/null 2>&1; then
+        local gh_proxy
+        gh_proxy=$(run_as_user git config --global --get-regexp 'url\..*\.insteadof' 2>/dev/null \
+            | grep -i 'https://github.com/' | awk '{print $1}' | sed -E 's#^url\.##; s#\.insteadof$##I' | head -1)
+        if [ -n "$gh_proxy" ] && [[ "$gh_proxy" != "https://github.com/" ]]; then
+            echo -e "  ${YELLOW}GitHub:${NC}    ${YELLOW}CHANGED${NC} -> $gh_proxy"
+            changed=$((changed + 1))
+        fi
+    fi
+
+    # System package manager mirror (apt sources / dnf repos)
+    local sys_mirror=""
+    if [ "$PKG_MANAGER" = "apt" ]; then
+        local apt_src="/etc/apt/sources.list"
+        [ -f /etc/apt/sources.list.d/ubuntu.sources ] && apt_src="/etc/apt/sources.list.d/ubuntu.sources"
+        if [ -f "$apt_src" ]; then
+            sys_mirror=$(grep -hoE 'https?://[a-zA-Z0-9._-]+' "$apt_src" 2>/dev/null \
+                | grep -viE 'archive\.ubuntu\.com|security\.ubuntu\.com|debian\.org' \
+                | sort -u | paste -sd ', ' -)
+        fi
+    elif [ "$PKG_MANAGER" = "dnf" ] || [ "$PKG_MANAGER" = "yum" ]; then
+        if [ -d /etc/yum.repos.d ]; then
+            sys_mirror=$(grep -rhoE '^baseurl=https?://[^/]+' /etc/yum.repos.d/*.repo 2>/dev/null \
+                | sed -E 's#^baseurl=https?://##' \
+                | grep -viE 'fedoraproject\.org|centos\.org|rockylinux\.org' \
+                | sort -u | paste -sd ', ' -)
+        fi
+    fi
+    if [ -n "$sys_mirror" ]; then
+        echo -e "  ${YELLOW}${PKG_MANAGER}:${NC}       ${YELLOW}CHANGED${NC} -> $sys_mirror"
+        changed=$((changed + 1))
+    fi
+
+    if [ "$changed" -eq 0 ]; then
+        echo -e "  ${CYAN}all at defaults (no mirrors configured)${NC}"
     fi
 
     echo -e "${CYAN}==============================================${NC}"
@@ -1561,8 +1672,9 @@ main_menu() {
         for i in "${!main_menu_items[@]}"; do
             echo "  $((i + 1))) ${main_menu_items[$i]}"
         done
+        echo "  0) Exit"
         echo
-        read -rp "Select an option (1-${#main_menu_items[@]}): " choice
+        read -rp "Select an option (0-${#main_menu_items[@]}): " choice
 
         case "$choice" in
             1) show_status ;;
@@ -1571,7 +1683,13 @@ main_menu() {
             4) registries_menu ;;
             5) server_setup_menu ;;
             6) diagnostics_menu ;;
-            7) echo -e "${CYAN}Bye.${NC}"; exit 0 ;;
+            0)
+                echo
+                echo -e "${CYAN}Thanks for using the Iranian Servers Toolkit.${NC}"
+                echo -e "${GREEN}Made with love by Amin Sepehri${NC} — https://github.com/aminrpg"
+                echo -e "${CYAN}Goodbye!${NC}"
+                exit 0
+                ;;
             *) echo -e "${RED}Invalid choice${NC}" ;;
         esac
     done

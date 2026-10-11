@@ -26,7 +26,7 @@ This script wraps all of that into one menu. Pick an option, and it handles the 
 
 ## ✨ Features
 
-- 📊 **Status dashboard** — see your OS, package manager, current DNS, Docker version, and active registry mirror at a glance.
+- 📊 **Status dashboard** — see your OS, package manager, current DNS, Docker version, and more at a glance. Any changed Docker proxy or package registry is highlighted so you instantly know what's been switched away from its default.
 - 🌐 **One-key DNS switching** — jump between 12 popular resolvers (Shecan, Radar, Electro, Begzar, Google, Cloudflare, and more).
 - 💾 **Automatic DNS backup** — every change saves a timestamped copy of `/etc/resolv.conf` first, so you can always roll back.
 - ⏪ **Restore from backup** — browse your saved `resolv.conf` backups and roll back to any of them in one step.
@@ -83,11 +83,13 @@ The toolkit is organized into a main menu with category submenus:
   4) Package Registries
   5) Server Setup
   6) Diagnostics
-  7) Exit
+  0) Exit
 ```
 
+> Choose **`0`** to exit. The script prints a short goodbye (toolkit name + author) and exits with status `0` (success).
+
 ### 1 · Show Status
-A one-screen dashboard: OS, package manager, kernel, current DNS servers, number of DNS backups, Docker version, and the active registry mirror.
+A one-screen dashboard: OS, package manager, kernel, current DNS servers, number of DNS backups, and Docker version. It also reports the **Docker Proxy** and any **package registries** (npm, pip, Maven, Composer, Go, NuGet, GitHub proxy, and the system package manager) — anything changed from its default is flagged `CHANGED` in a highlight color, so you can see at a glance what's been switched. If nothing has been changed, it says so.
 
 ### 2 · DNS Tools
 
@@ -228,7 +230,8 @@ Available under **Package Registries**. Each writes a backup before changing any
 
 - **Distro detection** — on startup, `detect_distro()` reads `/etc/os-release` for the OS name and probes for `apt`, `dnf`, `yum`, `pacman`, or `zypper`, then wires the right update/install commands for that package manager.
 - **Per-user configs** — `resolve_target_user()` reads `$SUDO_USER` so npm/Yarn/pip settings are written to the real user's home and `chown`ed back to them, not left root-owned.
-- **Status dashboard** — `show_status()` reads the detected OS, parses `nameserver` lines from `/etc/resolv.conf`, counts backups, queries the Docker version, and extracts `registry-mirrors` from `/etc/docker/daemon.json`.
+- **Status dashboard** — `show_status()` reads the detected OS, parses `nameserver` lines from `/etc/resolv.conf`, counts backups, and queries the Docker version. It then inspects each config (`/etc/docker/daemon.json`, `~/.npmrc`, `~/.config/pip/pip.conf`, `~/.m2/settings.xml`, Composer/NuGet config, `go env GOPROXY`, git `insteadOf`, and the apt/dnf sources) and flags any that differ from their defaults as `CHANGED`.
+- **Clean exit** — selecting `0` from the main menu prints the toolkit name and author, then exits with status `0` (success).
 - **DNS** — `set_dns()` backs up `/etc/resolv.conf`, then writes new `nameserver` lines for the chosen provider (adding `options edns0 trust-ad` and preserving any `search` domains, except on reset).
 - **Restore** — `restore_dns_backup()` lists every `/etc/resolv.conf.bak.*` (newest first, with timestamps) and copies the chosen one back — after backing up the current file so the restore is itself reversible.
 - **Docker install/update** — refreshes package lists via the detected package manager, installs `curl`, and pipes the official `https://get.docker.com` script into `sh`. Installation is skipped if Docker is already detected.
