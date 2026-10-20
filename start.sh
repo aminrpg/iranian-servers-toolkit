@@ -208,7 +208,7 @@ connectivity_targets=(
 )
 
 # Available DNS providers and their servers
-dns_options=("Shecan" "Shecan Pro" "Radar" "Electro" "Begzar" "DNSPro" "403" "XCR9" "Bertina" "DynX" "Google" "Cloudflare" "Reset to Default")
+dns_options=("Shecan" "Shecan Pro" "Radar" "Electro" "Begzar" "DNSPro" "403" "XODNS" "Bertina" "DynX" "Google" "Cloudflare" "Reset to Default")
 declare -A dns_servers=(
     ["Shecan"]="178.22.122.100 185.51.200.2"
 	["Shecan Pro"]="178.22.122.101 185.51.200.1"
@@ -217,7 +217,7 @@ declare -A dns_servers=(
     ["Begzar"]="185.55.226.26 185.55.226.25"
     ["DNSPro"]="87.107.110.109 87.107.110.110"
     ["403"]="10.202.10.202 10.202.10.102"
-    ["XCR9"]="85.208.255.182 85.208.255.71"
+    ["XODNS"]="85.208.255.182 85.208.255.71"
 	["Bertina"]="193.186.32.32"
 	["DynX"]="10.70.95.150 10.70.95.162"
     ["Google"]="8.8.8.8 8.8.4.4"
