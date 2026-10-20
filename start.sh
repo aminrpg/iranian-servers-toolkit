@@ -246,8 +246,9 @@ registry_proxies=(
 
 # containerd / Kubernetes registry mirrors.
 # These configure the containerd runtime directly (/etc/containerd/certs.d),
-# which is what Kubernetes nodes (kubeadm, k3s, RKE2), CRI-O and Podman use —
-# the classic Docker daemon.json does NOT apply there.
+# which is what Kubernetes nodes (kubeadm, k3s, RKE2) and the containerd CRI
+# use — the classic Docker daemon.json does NOT apply there. (Podman/Buildah
+# read their own containers-registries.conf instead; see set_podman_mirror.)
 #
 # containerd's hosts.toml maps ONE upstream registry per host file:
 #   - upstream "_default": a universal gateway that proxies EVERY registry at
@@ -433,6 +434,18 @@ show_status() {
         echo -e "${GREEN}containerd mirror:${NC} ${YELLOW}CHANGED${NC} -> ${YELLOW}${containerd_mirror}${NC}"
     elif command -v containerd >/dev/null 2>&1 || [ -S /run/containerd/containerd.sock ]; then
         echo -e "${GREEN}containerd mirror:${NC} ${CYAN}default (none configured)${NC}"
+    fi
+
+    # Podman registry mirror (containers-registries.conf drop-in we write)
+    local podman_mirror=""
+    if [ -f /etc/containers/registries.conf.d/001-iran-mirror.conf ]; then
+        podman_mirror=$(grep -oE 'location = "[^"]+"' /etc/containers/registries.conf.d/001-iran-mirror.conf 2>/dev/null \
+            | sed -E 's/location = "//; s/"$//' | sort -u | grep -vE '^(docker\.io|registry\.k8s\.io|gcr\.io|quay\.io|nvcr\.io)$' | paste -sd ', ' -)
+    fi
+    if [ -n "$podman_mirror" ]; then
+        echo -e "${GREEN}Podman mirror:${NC}   ${YELLOW}CHANGED${NC} -> ${YELLOW}${podman_mirror}${NC}"
+    elif command -v podman >/dev/null 2>&1; then
+        echo -e "${GREEN}Podman mirror:${NC}   ${CYAN}default (none configured)${NC}"
     fi
 
     # Package registries: show only the ones that have been changed from
@@ -789,9 +802,10 @@ test_mirror_health() {
 }
 
 # Configure the containerd runtime to pull images through a mirror.
-# This is what Kubernetes nodes (kubeadm/k3s/RKE2), CRI-O and Podman use —
+# This is what Kubernetes nodes (kubeadm/k3s/RKE2) and the containerd CRI use —
 # docker daemon.json does NOT affect them. We write a hosts.toml under
 # /etc/containerd/certs.d and make sure containerd's config_path points there.
+# (For Podman/Buildah/Skopeo, use set_podman_mirror instead.)
 set_containerd_mirror() {
     if ! command -v containerd >/dev/null 2>&1 && [ ! -S /run/containerd/containerd.sock ]; then
         echo -e "${CYAN}containerd not detected.${NC} This option targets Kubernetes/containerd nodes."
@@ -927,6 +941,111 @@ reset_containerd_mirror() {
     else
         echo -e "${RED}Warning:${NC} Config cleared but containerd restart failed. Restart it manually."
     fi
+}
+
+# Upstream registries covered by a "universal" gateway. Podman has no
+# equivalent of containerd's _default fallback, so for a universal mirror we
+# write one [[registry]] pull-through block per upstream, all pointing at it.
+podman_universal_upstreams=("docker.io" "registry.k8s.io" "gcr.io" "quay.io" "nvcr.io")
+
+# Configure Podman (and other github.com/containers tools: Buildah, Skopeo,
+# CRI-O) to pull images through a mirror. Podman does NOT read Docker's
+# daemon.json or containerd's certs.d — it uses containers-registries.conf.
+# We write a drop-in file under /etc/containers/registries.conf.d/ so the
+# main registries.conf is left untouched.
+set_podman_mirror() {
+    if ! command -v podman >/dev/null 2>&1; then
+        echo -e "${CYAN}Podman not detected.${NC} This writes containers-registries.conf (also used by Buildah/Skopeo/CRI-O)."
+        read -rp "Configure anyway? (y/N): " go
+        [[ "$go" =~ ^[Yy]$ ]] || return
+    fi
+
+    # Same combined list as the containerd option: curated gateways first,
+    # then the Iranian Docker Hub mirrors (docker.io only).
+    local menu_hosts=() menu_upstreams=() menu_labels=()
+    local name
+    for name in "${containerd_mirror_options[@]}"; do
+        menu_hosts+=("${containerd_mirror_hosts[$name]}")
+        menu_upstreams+=("${containerd_mirror_upstreams[$name]}")
+        menu_labels+=("$name")
+    done
+    for proxy in "${registry_proxies[@]}"; do
+        menu_hosts+=("$proxy")
+        menu_upstreams+=("docker.io")
+        menu_labels+=("$proxy  (Docker Hub only)")
+    done
+
+    echo
+    echo -e "${CYAN}Select Podman registry mirror:${NC}"
+    echo -e "${CYAN}  Universal/K8s gateways cover all registries; the rest mirror Docker Hub only.${NC}"
+    local i
+    for i in "${!menu_labels[@]}"; do
+        echo "  $((i + 1))) ${menu_labels[$i]}"
+    done
+    echo "  0) Back"
+    echo
+    read -rp "Select (0-${#menu_labels[@]}): " p_choice
+
+    if [[ "$p_choice" == "0" ]]; then return; fi
+    if [[ ! "$p_choice" =~ ^[0-9]+$ ]] || (( p_choice < 1 || p_choice > ${#menu_labels[@]} )); then
+        echo -e "${RED}Invalid option${NC}"; return
+    fi
+
+    local host upstream
+    host="${menu_hosts[$((p_choice - 1))]}"
+    upstream="${menu_upstreams[$((p_choice - 1))]}"
+
+    local confdir="/etc/containers/registries.conf.d"
+    mkdir -p "$confdir"
+    local conffile="$confdir/001-iran-mirror.conf"
+    [ -f "$conffile" ] && cp "$conffile" "${conffile}.bak.$(date +%Y%m%d_%H%M%S)"
+
+    # Build the list of upstreams to remap. A "_default" (universal) gateway
+    # mirrors several registries; anything else mirrors just its one upstream.
+    local upstreams=()
+    if [ "$upstream" = "_default" ]; then
+        upstreams=("${podman_universal_upstreams[@]}")
+    else
+        upstreams=("$upstream")
+    fi
+
+    {
+        echo "# Iranian registry mirror(s) — written by Iranian Servers Toolkit on $(date)"
+        echo "# Mirror host: $host"
+        local u
+        for u in "${upstreams[@]}"; do
+            echo
+            echo "[[registry]]"
+            echo "prefix = \"$u\""
+            echo "location = \"$u\""
+            echo
+            echo "[[registry.mirror]]"
+            echo "location = \"$host\""
+        done
+    } > "$conffile"
+
+    echo -e "${GREEN}Wrote:${NC} $conffile"
+    echo -e "${GREEN}Podman mirror set:${NC} $host"
+    if [ "$upstream" = "_default" ]; then
+        echo -e "${CYAN}Covers:${NC} ${podman_universal_upstreams[*]}"
+    else
+        echo -e "${CYAN}Covers:${NC} $upstream"
+    fi
+    echo -e "${CYAN}Verify with:${NC} podman pull docker.io/library/nginx:alpine"
+    echo -e "${CYAN}(No restart needed — Podman reads this config per pull.)${NC}"
+}
+
+# Remove the Podman mirror drop-in we wrote.
+reset_podman_mirror() {
+    local conffile="/etc/containers/registries.conf.d/001-iran-mirror.conf"
+    if [ ! -f "$conffile" ]; then
+        echo -e "${CYAN}No $conffile found — nothing to reset.${NC}"
+        return
+    fi
+    cp "$conffile" "${conffile}.bak.$(date +%Y%m%d_%H%M%S)"
+    rm -f "$conffile"
+    echo -e "${GREEN}Podman mirror removed:${NC} $conffile"
+    echo -e "${CYAN}(A timestamped backup was kept alongside it.)${NC}"
 }
 
 # Install or update the Docker Compose plugin
@@ -1222,7 +1341,7 @@ dns_menu() {
 }
 
 docker_menu() {
-    local items=("Install Docker" "Update Docker" "Set Docker Proxy" "Reset Docker Proxy" "Set containerd / K8s Mirror" "Reset containerd / K8s Mirror" "Test Mirror Health" "Install Docker Compose")
+    local items=("Install Docker" "Update Docker" "Set Docker Proxy" "Reset Docker Proxy" "Set containerd / K8s Mirror" "Reset containerd / K8s Mirror" "Set Podman Mirror" "Reset Podman Mirror" "Test Mirror Health" "Install Docker Compose")
     while true; do
         echo
         echo -e "${CYAN}Docker Tools:${NC}"
@@ -1237,8 +1356,10 @@ docker_menu() {
             4) reset_docker_proxy ;;
             5) set_containerd_mirror ;;
             6) reset_containerd_mirror ;;
-            7) test_mirror_health ;;
-            8) install_compose ;;
+            7) set_podman_mirror ;;
+            8) reset_podman_mirror ;;
+            9) test_mirror_health ;;
+            10) install_compose ;;
             0) return ;;
             *) echo -e "${RED}Invalid choice${NC}" ;;
         esac

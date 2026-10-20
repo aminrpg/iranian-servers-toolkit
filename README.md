@@ -35,7 +35,8 @@ This script wraps all of that into one menu. Pick an option, and it handles the 
 - 🪞 **Iranian Docker registry mirrors** — pull images through 15 local mirrors, with an unset option to remove them again.
 - ⚡ **Auto-pick the fastest mirror** — benchmarks every mirror with `ping` and selects the lowest-latency one.
 - 🩺 **Mirror health test** — checks your configured Docker mirror's latency, HTTP reachability, and a real test pull.
-- ☸️ **containerd / Kubernetes mirror** — configure the containerd runtime (what k8s nodes, k3s, RKE2, CRI-O and Podman actually use) to pull through an Iranian/anti-sanctions mirror via `/etc/containerd/certs.d` — covering Docker Hub, `registry.k8s.io`, `gcr.io`, `quay.io` and more. `daemon.json` alone does not reach these.
+- ☸️ **containerd / Kubernetes mirror** — configure the containerd runtime (what k8s nodes, k3s, RKE2 and the containerd CRI actually use) to pull through an Iranian/anti-sanctions mirror via `/etc/containerd/certs.d` — covering Docker Hub, `registry.k8s.io`, `gcr.io`, `quay.io` and more. `daemon.json` alone does not reach these.
+- 🦭 **Podman mirror** — point Podman (and Buildah/Skopeo/CRI-O, which share the config) at the same Iranian mirrors via a `containers-registries.conf.d` drop-in. Podman reads neither `daemon.json` nor containerd's `certs.d`, so it needs its own setup.
 - 🧩 **Docker Compose installer** — install or update the Compose plugin in one step.
 - 📦 **Package registry mirrors** — point **APT, DNF/YUM, Pacman, npm, Yarn, pip, Composer, Go, NuGet, and Maven/Gradle** at fast Iranian mirrors (per-user configs land in the right home, not root's).
 - 🐙 **GitHub proxy** — route `git clone`/fetch through an Iranian GitHub proxy when GitHub is slow or blocked (reversible, via git's `insteadOf`).
@@ -90,7 +91,7 @@ The toolkit is organized into a main menu with category submenus:
 > Choose **`0`** to exit. The script prints a short goodbye (toolkit name + author) and exits with status `0` (success).
 
 ### 1 · Show Status
-A one-screen dashboard: OS, package manager, kernel, current DNS servers, number of DNS backups, and Docker version. It also reports the **Docker Proxy**, the **containerd mirror** (for Kubernetes nodes), and any **package registries** (npm, pip, Maven, Composer, Go, NuGet, GitHub proxy, and the system package manager) — anything changed from its default is flagged `CHANGED` in a highlight color, so you can see at a glance what's been switched. If nothing has been changed, it says so.
+A one-screen dashboard: OS, package manager, kernel, current DNS servers, number of DNS backups, and Docker version. It also reports the **Docker Proxy**, the **containerd mirror** (for Kubernetes nodes), the **Podman mirror**, and any **package registries** (npm, pip, Maven, Composer, Go, NuGet, GitHub proxy, and the system package manager) — anything changed from its default is flagged `CHANGED` in a highlight color, so you can see at a glance what's been switched. If nothing has been changed, it says so.
 
 ### 2 · DNS Tools
 
@@ -110,6 +111,8 @@ A one-screen dashboard: OS, package manager, kernel, current DNS servers, number
 | **Reset Docker Proxy** | Remove the mirror from `daemon.json` (backing it up first) and restart Docker. |
 | **Set containerd / K8s Mirror** | Configure the **containerd** runtime (Kubernetes nodes, k3s, RKE2, CRI-O, Podman) via `/etc/containerd/certs.d`, enable `config_path`, and restart containerd. Pick the XODNS universal gateway (all registries via containerd's `_default` fallback), Docker Hub, or `registry.k8s.io`. |
 | **Reset containerd / K8s Mirror** | Remove all mirror files under `/etc/containerd/certs.d` (backing up the tree first) and restart containerd. |
+| **Set Podman Mirror** | Write a `containers-registries.conf.d` drop-in so **Podman** (and Buildah/Skopeo/CRI-O) pulls through an Iranian mirror. Same mirror list as containerd; a universal gateway maps `docker.io`, `registry.k8s.io`, `gcr.io`, `quay.io`, and `nvcr.io` at once. No restart needed. |
+| **Reset Podman Mirror** | Remove the Podman mirror drop-in (keeping a timestamped backup). |
 | **Test Mirror Health** | Report the configured mirror's latency, HTTP reachability, and a real `hello-world` test pull. |
 | **Install Docker Compose** | Install or update the `docker-compose-plugin`. |
 
@@ -236,6 +239,32 @@ crictl pull registry.k8s.io/pause:3.10
 >
 > XODNS DNS answers only **registered** IPs. If this is a cluster with a changing egress IP, keep it registered from your XODNS panel (they expose a `sync-ip` webhook you can run from cron or a CI step). That token is per-account and not stored by this toolkit.
 
+## 🦭 Podman Registry Mirror
+
+Podman (and the rest of the [github.com/containers](https://github.com/containers) stack — **Buildah, Skopeo, CRI-O**) does **not** read `/etc/docker/daemon.json` or containerd's `/etc/containerd/certs.d`. It has its own config at `containers-registries.conf`. The **Set Podman Mirror** option (Docker Tools → 7) writes a drop-in file at `/etc/containers/registries.conf.d/001-iran-mirror.conf`, leaving your main `registries.conf` untouched.
+
+It offers the **same mirror list** as the containerd option. For each upstream it writes a pull-through block:
+
+```toml
+# /etc/containers/registries.conf.d/001-iran-mirror.conf
+[[registry]]
+prefix = "docker.io"
+location = "docker.io"
+
+[[registry.mirror]]
+location = "docker-mirror.xodns.net"
+```
+
+Because Podman has no equivalent of containerd's `_default` fallback, picking the **XODNS Universal** gateway writes one block each for `docker.io`, `registry.k8s.io`, `gcr.io`, `quay.io`, and `nvcr.io` — all pointing at `mirror.xodns.net`. The Iranian Docker Hub mirrors are scoped to `docker.io` only, same as before.
+
+No service restart is needed — Podman re-reads this config on every pull. Verify with:
+
+```bash
+podman pull docker.io/library/nginx:alpine
+```
+
+> **Reset Podman Mirror** removes the drop-in file (keeping a timestamped backup). Your main `/etc/containers/registries.conf` is never modified.
+
 ## 📦 Supported Package Registry Mirrors
 
 Available under **Package Registries**. Each writes a backup before changing anything, and each list includes a **Reset to Official** entry to revert.
@@ -275,6 +304,7 @@ Available under **Package Registries**. Each writes a backup before changing any
 - **Docker install/update** — refreshes package lists via the detected package manager, installs `curl`, and pipes the official `https://get.docker.com` script into `sh`. Installation is skipped if Docker is already detected.
 - **Registry mirror** — writes `/etc/docker/daemon.json` and restarts the Docker daemon. The auto-select mode uses `ping` + `awk` to compare float latencies across all mirrors; the reset path uses `jq` when available (falling back to an empty config) and backs up `daemon.json` first.
 - **containerd mirror** — `set_containerd_mirror()` writes a `hosts.toml` under `/etc/containerd/certs.d/<upstream>` (`_default` for the universal gateway), flips `config_path` to `/etc/containerd/certs.d` in `config.toml` if it's still empty, backs up any file it replaces, and restarts containerd. The reset backs up and clears the whole `certs.d` tree.
+- **Podman mirror** — `set_podman_mirror()` writes `[[registry]]` + `[[registry.mirror]]` pull-through blocks to a `/etc/containers/registries.conf.d/` drop-in (one per upstream for a universal gateway, backing up any prior drop-in). No daemon to restart; Podman, Buildah, Skopeo and CRI-O read it per pull. The reset removes just the drop-in.
 - **APT mirror** — `set_apt_mirror()` detects the classic `sources.list` or the newer deb822 `ubuntu.sources`, backs it up, and `sed`-rewrites known upstream hosts to the chosen Iranian mirror before running `apt-get update`.
 - **Diagnostics** — the connectivity doctor and DNS benchmark are read-only (they change no config); they only probe endpoints and report.
 - **Server setup** — timezone/NTP use `timedatectl` (with a symlink fallback), swap uses `fallocate` (falling back to `dd`) and persists via `/etc/fstab`, SSH hardening edits `sshd_config` behind a confirmation and validates with `sshd -t` before restarting, and firewall setup auto-selects UFW or firewalld. Every file touched is backed up first.

@@ -37,7 +37,8 @@
 - 🪞 **میرورهای ایرانی رجیستری Docker** — دریافت ایمیج از ۱۵ میرور محلی، با گزینه‌ی حذف دوباره.
 - ⚡ **انتخاب خودکار سریع‌ترین میرور** — بنچمارک همه‌ی میرورها با `ping` و انتخاب کم‌تأخیرترین.
 - 🩺 **تست سلامت میرور** — بررسی تأخیر، دسترس‌پذیری HTTP و یک pull واقعی برای میرور تنظیم‌شده.
-- ☸️ **میرور containerd / کوبرنتیز** — تنظیم رانتایم containerd (چیزی که نودهای k8s، k3s، RKE2، CRI-O و Podman واقعاً از آن استفاده می‌کنند) برای دریافت ایمیج از یک میرور ایرانی/ضدتحریم از طریق `/etc/containerd/certs.d` — پوشش Docker Hub، `registry.k8s.io`، `gcr.io`، `quay.io` و بیشتر. تنها `daemon.json` به این‌ها نمی‌رسد.
+- ☸️ **میرور containerd / کوبرنتیز** — تنظیم رانتایم containerd (چیزی که نودهای k8s، k3s، RKE2 و CRI کانتینرد واقعاً از آن استفاده می‌کنند) برای دریافت ایمیج از یک میرور ایرانی/ضدتحریم از طریق `/etc/containerd/certs.d` — پوشش Docker Hub، `registry.k8s.io`، `gcr.io`، `quay.io` و بیشتر. تنها `daemon.json` به این‌ها نمی‌رسد.
+- 🦭 **میرور Podman** — اتصال Podman (و Buildah/Skopeo/CRI-O که همین پیکربندی را می‌خوانند) به همان میرورهای ایرانی از طریق یک فایل drop-in در `containers-registries.conf.d`. Podman نه `daemon.json` را می‌خواند و نه `certs.d` کانتینرد را، پس تنظیم مخصوص خودش را لازم دارد.
 - 🧩 **نصب Docker Compose** — نصب یا به‌روزرسانی افزونه‌ی Compose در یک مرحله.
 - 📦 **میرورهای رجیستری پکیج‌ها** — تنظیم **APT، DNF/YUM، Pacman، npm، Yarn، pip، Composer، Go، NuGet و Maven/Gradle** روی میرورهای سریع ایرانی (پیکربندی هر کاربر در خانه‌ی خودش قرار می‌گیرد، نه root).
 - 🐙 **پروکسی گیت‌هاب** — عبور `git clone`/fetch از یک پروکسی گیت‌هاب ایرانی وقتی گیت‌هاب کند یا مسدود است (برگشت‌پذیر، با `insteadOf` گیت).
@@ -108,7 +109,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 > برای خروج **`0`** را بزنید. اسکریپت یک پیام خداحافظی کوتاه (نام ابزار + سازنده) چاپ می‌کند و با وضعیت `0` (خروج موفق) بسته می‌شود.
 
 ### ۱ · نمایش وضعیت (Show Status)
-یک داشبورد یک‌صفحه‌ای: سیستم‌عامل، پکیج‌منیجر، کرنل، DNSهای فعلی، تعداد پشتیبان‌های DNS و نسخه‌ی Docker. همچنین وضعیت **پروکسی Docker**، **میرور containerd** (برای نودهای کوبرنتیز) و هر **رجیستری پکیجی** (npm، pip، Maven، Composer، Go، NuGet، پروکسی گیت‌هاب و پکیج‌منیجر سیستم) را نشان می‌دهد — هر موردی که از پیش‌فرض تغییر کرده باشد با برچسب `CHANGED` و رنگ متمایز مشخص می‌شود تا یک‌نگاهه ببینید چه چیزی عوض شده است. اگر چیزی تغییر نکرده باشد، همان را اعلام می‌کند.
+یک داشبورد یک‌صفحه‌ای: سیستم‌عامل، پکیج‌منیجر، کرنل، DNSهای فعلی، تعداد پشتیبان‌های DNS و نسخه‌ی Docker. همچنین وضعیت **پروکسی Docker**، **میرور containerd** (برای نودهای کوبرنتیز)، **میرور Podman** و هر **رجیستری پکیجی** (npm، pip، Maven، Composer، Go، NuGet، پروکسی گیت‌هاب و پکیج‌منیجر سیستم) را نشان می‌دهد — هر موردی که از پیش‌فرض تغییر کرده باشد با برچسب `CHANGED` و رنگ متمایز مشخص می‌شود تا یک‌نگاهه ببینید چه چیزی عوض شده است. اگر چیزی تغییر نکرده باشد، همان را اعلام می‌کند.
 
 ### ۲ · ابزارهای DNS
 
@@ -128,6 +129,8 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 | **Reset Docker Proxy** | حذف میرور از `daemon.json` (با پشتیبان‌گیری) و ری‌استارت Docker. |
 | **Set containerd / K8s Mirror** | تنظیم رانتایم **containerd** (نودهای کوبرنتیز، k3s، RKE2، CRI-O، Podman) از طریق `/etc/containerd/certs.d`، فعال‌سازی `config_path` و ری‌استارت containerd. گزینه‌ها: درگاه جامع XODNS (همه‌ی رجیستری‌ها با fallback `_default` کانتینرد)، Docker Hub یا `registry.k8s.io`. |
 | **Reset containerd / K8s Mirror** | حذف همه‌ی فایل‌های میرور از `/etc/containerd/certs.d` (ابتدا پشتیبان کل درخت) و ری‌استارت containerd. |
+| **Set Podman Mirror** | نوشتن یک فایل drop-in در `containers-registries.conf.d` تا **Podman** (و Buildah/Skopeo/CRI-O) از یک میرور ایرانی ایمیج بکشد. همان فهرست میرور containerd؛ درگاه جامع، `docker.io`، `registry.k8s.io`، `gcr.io`، `quay.io` و `nvcr.io` را یکجا نگاشت می‌کند. بدون نیاز به ری‌استارت. |
+| **Reset Podman Mirror** | حذف فایل drop-in میرور Podman (با نگه‌داشتن یک پشتیبان زمان‌دار). |
 | **Test Mirror Health** | گزارش تأخیر، دسترس‌پذیری HTTP و یک pull واقعی `hello-world` برای میرور تنظیم‌شده. |
 | **Install Docker Compose** | نصب یا به‌روزرسانی `docker-compose-plugin`. |
 
@@ -273,6 +276,36 @@ crictl pull registry.k8s.io/pause:3.10
 > **Reset containerd / K8s Mirror** همه‌ی فایل‌های زیر `/etc/containerd/certs.d` را حذف می‌کند (ابتدا کل درخت پشتیبان می‌شود) و containerd را ری‌استارت می‌کند. نقاط میرور XODNS از [xodns.net](https://xodns.net) گرفته شده‌اند؛ برای افزودن میرور دلخواه، آرایه‌های `containerd_mirror_*` در بالای `start.sh` را ویرایش کنید.
 >
 > دی‌ان‌اس XODNS فقط به آی‌پی‌های **ثبت‌شده** پاسخ می‌دهد. اگر کلاستر آی‌پی خروجی متغیر دارد، آن را از پنل XODNS ثبت‌شده نگه دارید (یک وب‌هوک `sync-ip` دارند که می‌توانید از cron یا یک قدم CI صدا بزنید). آن توکن مخصوص هر حساب است و این ابزار آن را ذخیره نمی‌کند.
+
+</div>
+
+<div dir="rtl">
+
+## 🦭 میرور رجیستری Podman
+
+پادمن (و بقیه‌ی مجموعه‌ی [github.com/containers](https://github.com/containers) — **Buildah، Skopeo، CRI-O**) نه `/etc/docker/daemon.json` را می‌خواند و نه `certs.d` کانتینرد را. پیکربندی مخصوص خودش را در `containers-registries.conf` دارد. گزینه‌ی **Set Podman Mirror** (ابزارهای Docker → ۷) یک فایل drop-in در `/etc/containers/registries.conf.d/001-iran-mirror.conf` می‌نویسد و `registries.conf` اصلی شما را دست‌نخورده می‌گذارد.
+
+**همان فهرست میرور** گزینه‌ی containerd ارائه می‌شود. برای هر رجیستری مقصد یک بلاک pull-through می‌نویسد:
+
+```toml
+# /etc/containers/registries.conf.d/001-iran-mirror.conf
+[[registry]]
+prefix = "docker.io"
+location = "docker.io"
+
+[[registry.mirror]]
+location = "docker-mirror.xodns.net"
+```
+
+چون Podman معادل fallback `_default` کانتینرد را ندارد، انتخاب درگاه **XODNS Universal** یک بلاک جداگانه برای `docker.io`، `registry.k8s.io`، `gcr.io`، `quay.io` و `nvcr.io` می‌نویسد که همگی به `mirror.xodns.net` اشاره می‌کنند. میرورهای Docker Hub ایرانی مثل قبل فقط به `docker.io` محدود می‌شوند.
+
+نیازی به ری‌استارت سرویس نیست — Podman این پیکربندی را در هر pull دوباره می‌خواند. تست کنید با:
+
+```bash
+podman pull docker.io/library/nginx:alpine
+```
+
+> **Reset Podman Mirror** فقط فایل drop-in را حذف می‌کند (با نگه‌داشتن یک پشتیبان زمان‌دار). فایل اصلی `/etc/containers/registries.conf` هرگز تغییر نمی‌کند.
 
 ## 📦 میرورهای رجیستری پکیج پشتیبانی‌شده
 
