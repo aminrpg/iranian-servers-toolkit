@@ -33,7 +33,7 @@
 - 💾 **پشتیبان‌گیری خودکار DNS** — پیش از هر تغییر، یک نسخه‌ی زمان‌دار از `/etc/resolv.conf` ذخیره می‌شود.
 - ⏪ **بازگردانی از پشتیبان** — پشتیبان‌های ذخیره‌شده را مرور کنید و در یک مرحله به هرکدام برگردید.
 - 🐧 **پشتیبانی چند-توزیعه** — تشخیص خودکار `apt`، `dnf`، `yum`، `pacman` یا `zypper`.
-- 🐳 **نصب/به‌روزرسانی Docker با یک فرمان** — به‌روزرسانی پکیج‌ها، نصب پیش‌نیازها و اجرای اسکریپت رسمی Docker.
+- 🐳 **نصب موتور کانتینر با یک فرمان** — Docker (اسکریپت رسمی) و همچنین **Podman، containerd، Buildah و Skopeo** از طریق پکیج‌منیجر تشخیص‌داده‌شده، تا هر رانتایمی را از یک منو راه‌اندازی کنید.
 - 🪞 **میرورهای ایرانی رجیستری Docker** — دریافت ایمیج از ۱۵ میرور محلی، با گزینه‌ی حذف دوباره.
 - ⚡ **انتخاب خودکار سریع‌ترین میرور** — بنچمارک همه‌ی میرورها با `ping` و انتخاب کم‌تأخیرترین.
 - 🩺 **تست سلامت میرور** — بررسی تأخیر، دسترس‌پذیری HTTP و یک pull واقعی برای میرور تنظیم‌شده.
@@ -125,14 +125,17 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 |--------|--------------|
 | **Install Docker** | به‌روزرسانی پکیج‌ها، نصب `curl` و سپس نصب Docker از `get.docker.com`. اگر نصب باشد رد می‌شود. |
 | **Update Docker** | اجرای دوباره‌ی نصب‌کننده‌ی رسمی برای به‌روزرسانی Docker. |
+| **Install Podman** | نصب Podman از طریق پکیج‌منیجر تشخیص‌داده‌شده. اگر نصب باشد رد می‌شود. |
+| **Install containerd** | نصب رانتایم containerd، ساخت `/etc/containerd/config.toml` پیش‌فرض در صورت نبود و فعال‌کردن سرویس. ابتدا `containerd` سپس `containerd.io` را امتحان می‌کند. |
+| **Install Buildah & Skopeo** | نصب Buildah و Skopeo (بقیه‌ی مجموعه‌ی containers که همان `registries.conf` پادمن را به اشتراک می‌گذارند). |
+| **Install Docker Compose** | نصب یا به‌روزرسانی `docker-compose-plugin`. |
 | **Set Docker Proxy** | انتخاب میرور (یا انتخاب خودکار سریع‌ترین)، نوشتن `/etc/docker/daemon.json` و ری‌استارت Docker. |
 | **Reset Docker Proxy** | حذف میرور از `daemon.json` (با پشتیبان‌گیری) و ری‌استارت Docker. |
-| **Set containerd / K8s Mirror** | تنظیم رانتایم **containerd** (نودهای کوبرنتیز، k3s، RKE2، CRI-O، Podman) از طریق `/etc/containerd/certs.d`، فعال‌سازی `config_path` و ری‌استارت containerd. گزینه‌ها: درگاه جامع XODNS (همه‌ی رجیستری‌ها با fallback `_default` کانتینرد)، Docker Hub یا `registry.k8s.io`. |
+| **Set containerd / K8s Mirror** | تنظیم رانتایم **containerd** (نودهای کوبرنتیز، k3s، RKE2، CRI کانتینرد) از طریق `/etc/containerd/certs.d`، فعال‌سازی `config_path` و ری‌استارت containerd. گزینه‌ها: درگاه جامع XODNS (همه‌ی رجیستری‌ها با fallback `_default` کانتینرد)، `registry.k8s.io`، Docker Hub یا یک میرور Docker Hub ایرانی. |
 | **Reset containerd / K8s Mirror** | حذف همه‌ی فایل‌های میرور از `/etc/containerd/certs.d` (ابتدا پشتیبان کل درخت) و ری‌استارت containerd. |
 | **Set Podman Mirror** | نوشتن یک فایل drop-in در `containers-registries.conf.d` تا **Podman** (و Buildah/Skopeo/CRI-O) از یک میرور ایرانی ایمیج بکشد. همان فهرست میرور containerd؛ درگاه جامع، `docker.io`، `registry.k8s.io`، `gcr.io`، `quay.io` و `nvcr.io` را یکجا نگاشت می‌کند. بدون نیاز به ری‌استارت. |
 | **Reset Podman Mirror** | حذف فایل drop-in میرور Podman (با نگه‌داشتن یک پشتیبان زمان‌دار). |
 | **Test Mirror Health** | گزارش تأخیر، دسترس‌پذیری HTTP و یک pull واقعی `hello-world` برای میرور تنظیم‌شده. |
-| **Install Docker Compose** | نصب یا به‌روزرسانی `docker-compose-plugin`. |
 
 ### ۴ · رجیستری پکیج‌ها
 
@@ -244,7 +247,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 
 ## ☸️ میرور رجیستری containerd / کوبرنتیز
 
-نودهای کوبرنتیز از طریق دیمن Docker ایمیج نمی‌کشند — مستقیماً با **containerd** (یا CRI-O / Podman) حرف می‌زنند، بنابراین `/etc/docker/daemon.json` هیچ اثری روی pullهای `kubeadm`، k3s، RKE2 یا `crictl` ندارد. گزینه‌ی **Set containerd / K8s Mirror** (ابزارهای Docker → ۵) این را با نوشتن `hosts.toml` بومی containerd در `/etc/containerd/certs.d`، فعال‌کردن `config_path` در `/etc/containerd/config.toml` و ری‌استارت containerd حل می‌کند.
+نودهای کوبرنتیز از طریق دیمن Docker ایمیج نمی‌کشند — مستقیماً با **containerd** (یا CRI-O / Podman) حرف می‌زنند، بنابراین `/etc/docker/daemon.json` هیچ اثری روی pullهای `kubeadm`، k3s، RKE2 یا `crictl` ندارد. گزینه‌ی **Set containerd / K8s Mirror** (در بخش ابزارهای Docker) این را با نوشتن `hosts.toml` بومی containerd در `/etc/containerd/certs.d`، فعال‌کردن `config_path` در `/etc/containerd/config.toml` و ری‌استارت containerd حل می‌کند.
 
 منو به دو گروه تقسیم شده است. سه گزینه‌ی اول درگاه‌های [XODNS](https://xodns.net) هستند که **همه‌ی** رجیستری‌ها (یا کل رجیستری کوبرنتیز) را پوشش می‌دهند؛ بقیه همان میرورهای Docker Hub ایرانی (همان فهرست پروکسی دیمن Docker) هستند که به `docker.io` محدود شده‌اند:
 
@@ -283,7 +286,7 @@ crictl pull registry.k8s.io/pause:3.10
 
 ## 🦭 میرور رجیستری Podman
 
-پادمن (و بقیه‌ی مجموعه‌ی [github.com/containers](https://github.com/containers) — **Buildah، Skopeo، CRI-O**) نه `/etc/docker/daemon.json` را می‌خواند و نه `certs.d` کانتینرد را. پیکربندی مخصوص خودش را در `containers-registries.conf` دارد. گزینه‌ی **Set Podman Mirror** (ابزارهای Docker → ۷) یک فایل drop-in در `/etc/containers/registries.conf.d/001-iran-mirror.conf` می‌نویسد و `registries.conf` اصلی شما را دست‌نخورده می‌گذارد.
+پادمن (و بقیه‌ی مجموعه‌ی [github.com/containers](https://github.com/containers) — **Buildah، Skopeo، CRI-O**) نه `/etc/docker/daemon.json` را می‌خواند و نه `certs.d` کانتینرد را. پیکربندی مخصوص خودش را در `containers-registries.conf` دارد. گزینه‌ی **Set Podman Mirror** (در بخش ابزارهای Docker) یک فایل drop-in در `/etc/containers/registries.conf.d/001-iran-mirror.conf` می‌نویسد و `registries.conf` اصلی شما را دست‌نخورده می‌گذارد.
 
 **همان فهرست میرور** گزینه‌ی containerd ارائه می‌شود. برای هر رجیستری مقصد یک بلاک pull-through می‌نویسد:
 

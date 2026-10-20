@@ -643,6 +643,131 @@ update_docker() {
     echo -e "${GREEN}Docker updated successfully. Version: $version${NC}"
 }
 
+# Install one or more packages via the detected package manager, trying each
+# candidate name in order until one succeeds (names differ across distros).
+# Usage: install_pkg_any "Display name" pkg1 [pkg2 ...]
+install_pkg_any() {
+    local label="$1"; shift
+    if [ "$PKG_MANAGER" = "unknown" ]; then
+        echo -e "${RED}Error:${NC} Unsupported distro — install $label manually."
+        return 1
+    fi
+    local pkg
+    for pkg in "$@"; do
+        echo -e "${GREEN}Trying package:${NC} $pkg"
+        if eval "$PKG_INSTALL $pkg" >/dev/null 2>&1; then
+            echo -e "${GREEN}Installed:${NC} $pkg"
+            return 0
+        fi
+    done
+    echo -e "${RED}Error:${NC} Could not install $label (tried: $*)."
+    return 1
+}
+
+# Install Podman (and optionally the rest of the containers toolset).
+install_podman() {
+    if command -v podman >/dev/null 2>&1; then
+        echo -e "${GREEN}Podman is already installed. Version: $(podman --version 2>/dev/null | awk '{print $3}')${NC}"
+        return
+    fi
+
+    if [ "$PKG_MANAGER" = "unknown" ]; then
+        echo -e "${RED}Error:${NC} Unsupported distro — no known package manager found."
+        echo -e "${CYAN}See:${NC} https://podman.io/docs/installation"
+        return 1
+    fi
+
+    echo -e "${CYAN}Installing Podman via $PKG_MANAGER...${NC}"
+    echo -e "${GREEN}Updating package lists...${NC}"
+    eval "$PKG_UPDATE" >/dev/null 2>&1
+
+    # The package name is "podman" on every supported distro.
+    if ! install_pkg_any "Podman" podman; then
+        return 1
+    fi
+
+    if command -v podman >/dev/null 2>&1; then
+        echo -e "${GREEN}Podman installed successfully. Version: $(podman --version 2>/dev/null | awk '{print $3}')${NC}"
+        echo -e "${CYAN}Tip:${NC} set an Iranian mirror via Docker Tools -> Set Podman Mirror."
+    else
+        echo -e "${RED}Error:${NC} podman command not found after installation."
+        return 1
+    fi
+}
+
+# Install the containerd runtime (used directly by Kubernetes nodes).
+install_containerd() {
+    if command -v containerd >/dev/null 2>&1; then
+        echo -e "${GREEN}containerd is already installed. Version: $(containerd --version 2>/dev/null | awk '{print $3}')${NC}"
+        return
+    fi
+
+    if [ "$PKG_MANAGER" = "unknown" ]; then
+        echo -e "${RED}Error:${NC} Unsupported distro — no known package manager found."
+        echo -e "${CYAN}See:${NC} https://github.com/containerd/containerd/blob/main/docs/getting-started.md"
+        return 1
+    fi
+
+    echo -e "${CYAN}Installing containerd via $PKG_MANAGER...${NC}"
+    echo -e "${GREEN}Updating package lists...${NC}"
+    eval "$PKG_UPDATE" >/dev/null 2>&1
+
+    # dnf/yum call it containerd.io (Docker CE repo) or containerd (Fedora);
+    # apt/pacman/zypper use containerd. Try the common names in order.
+    if ! install_pkg_any "containerd" containerd containerd.io; then
+        echo -e "${CYAN}Tip:${NC} on RHEL/CentOS you may need the Docker CE repo for containerd.io."
+        return 1
+    fi
+
+    if ! command -v containerd >/dev/null 2>&1; then
+        echo -e "${RED}Error:${NC} containerd command not found after installation."
+        return 1
+    fi
+
+    # Generate a default config if none exists, so certs.d mirrors work.
+    if [ ! -f /etc/containerd/config.toml ]; then
+        mkdir -p /etc/containerd
+        if containerd config default >/etc/containerd/config.toml 2>/dev/null; then
+            echo -e "${GREEN}Wrote default config:${NC} /etc/containerd/config.toml"
+        fi
+    fi
+
+    # Enable and start the service
+    systemctl enable --now containerd >/dev/null 2>&1
+
+    echo -e "${GREEN}containerd installed successfully. Version: $(containerd --version 2>/dev/null | awk '{print $3}')${NC}"
+    echo -e "${CYAN}Tip:${NC} set an Iranian mirror via Docker Tools -> Set containerd / K8s Mirror."
+}
+
+# Install Buildah and Skopeo (the rest of the containers.git toolset).
+install_buildah_skopeo() {
+    if [ "$PKG_MANAGER" = "unknown" ]; then
+        echo -e "${RED}Error:${NC} Unsupported distro — install buildah/skopeo manually."
+        return 1
+    fi
+
+    echo -e "${CYAN}Installing Buildah and Skopeo via $PKG_MANAGER...${NC}"
+    eval "$PKG_UPDATE" >/dev/null 2>&1
+
+    local ok=1
+    if command -v buildah >/dev/null 2>&1; then
+        echo -e "${GREEN}Buildah already installed:${NC} $(buildah --version 2>/dev/null | awk '{print $3}')"
+    else
+        install_pkg_any "Buildah" buildah || ok=0
+    fi
+    if command -v skopeo >/dev/null 2>&1; then
+        echo -e "${GREEN}Skopeo already installed:${NC} $(skopeo --version 2>/dev/null | awk '{print $3}')"
+    else
+        install_pkg_any "Skopeo" skopeo || ok=0
+    fi
+
+    if [ "$ok" -eq 1 ]; then
+        echo -e "${GREEN}Buildah/Skopeo ready.${NC} They share Podman's registries.conf mirror."
+    else
+        echo -e "${CYAN}Finished with some failures — see messages above.${NC}"
+    fi
+}
+
 # Find fastest proxy automatically
 find_fastest_proxy() {
     echo -e "${CYAN}Testing proxies for best performance...${NC}" >&2
@@ -1341,7 +1466,7 @@ dns_menu() {
 }
 
 docker_menu() {
-    local items=("Install Docker" "Update Docker" "Set Docker Proxy" "Reset Docker Proxy" "Set containerd / K8s Mirror" "Reset containerd / K8s Mirror" "Set Podman Mirror" "Reset Podman Mirror" "Test Mirror Health" "Install Docker Compose")
+    local items=("Install Docker" "Update Docker" "Install Podman" "Install containerd" "Install Buildah & Skopeo" "Install Docker Compose" "Set Docker Proxy" "Reset Docker Proxy" "Set containerd / K8s Mirror" "Reset containerd / K8s Mirror" "Set Podman Mirror" "Reset Podman Mirror" "Test Mirror Health")
     while true; do
         echo
         echo -e "${CYAN}Docker Tools:${NC}"
@@ -1352,14 +1477,17 @@ docker_menu() {
         case "$c" in
             1) install_docker ;;
             2) update_docker ;;
-            3) set_docker_proxy ;;
-            4) reset_docker_proxy ;;
-            5) set_containerd_mirror ;;
-            6) reset_containerd_mirror ;;
-            7) set_podman_mirror ;;
-            8) reset_podman_mirror ;;
-            9) test_mirror_health ;;
-            10) install_compose ;;
+            3) install_podman ;;
+            4) install_containerd ;;
+            5) install_buildah_skopeo ;;
+            6) install_compose ;;
+            7) set_docker_proxy ;;
+            8) reset_docker_proxy ;;
+            9) set_containerd_mirror ;;
+            10) reset_containerd_mirror ;;
+            11) set_podman_mirror ;;
+            12) reset_podman_mirror ;;
+            13) test_mirror_health ;;
             0) return ;;
             *) echo -e "${RED}Invalid choice${NC}" ;;
         esac

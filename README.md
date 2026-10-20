@@ -31,7 +31,7 @@ This script wraps all of that into one menu. Pick an option, and it handles the 
 - 💾 **Automatic DNS backup** — every change saves a timestamped copy of `/etc/resolv.conf` first, so you can always roll back.
 - ⏪ **Restore from backup** — browse your saved `resolv.conf` backups and roll back to any of them in one step.
 - 🐧 **Multi-distro support** — auto-detects `apt`, `dnf`, `yum`, `pacman`, or `zypper`, so it runs beyond Debian/Ubuntu.
-- 🐳 **One-command Docker install / update** — refreshes packages, installs prerequisites, and runs the official Docker script.
+- 🐳 **One-command container-engine install** — Docker (official script), plus **Podman, containerd, Buildah and Skopeo** via the detected package manager, so you can set up any runtime from one menu.
 - 🪞 **Iranian Docker registry mirrors** — pull images through 15 local mirrors, with an unset option to remove them again.
 - ⚡ **Auto-pick the fastest mirror** — benchmarks every mirror with `ping` and selects the lowest-latency one.
 - 🩺 **Mirror health test** — checks your configured Docker mirror's latency, HTTP reachability, and a real test pull.
@@ -107,14 +107,17 @@ A one-screen dashboard: OS, package manager, kernel, current DNS servers, number
 |--------|--------------|
 | **Install Docker** | Refreshes packages, installs `curl`, then installs Docker via `get.docker.com`. Skips if already present. |
 | **Update Docker** | Re-runs the official installer to upgrade Docker. |
+| **Install Podman** | Install Podman via the detected package manager. Skips if already present. |
+| **Install containerd** | Install the containerd runtime, generate a default `/etc/containerd/config.toml` if missing, and enable the service. Tries `containerd` then `containerd.io`. |
+| **Install Buildah & Skopeo** | Install Buildah and Skopeo (the rest of the containers toolset that shares Podman's `registries.conf`). |
+| **Install Docker Compose** | Install or update the `docker-compose-plugin`. |
 | **Set Docker Proxy** | Choose a registry mirror (or auto-select the fastest) and write `/etc/docker/daemon.json`, then restart Docker. |
 | **Reset Docker Proxy** | Remove the mirror from `daemon.json` (backing it up first) and restart Docker. |
-| **Set containerd / K8s Mirror** | Configure the **containerd** runtime (Kubernetes nodes, k3s, RKE2, CRI-O, Podman) via `/etc/containerd/certs.d`, enable `config_path`, and restart containerd. Pick the XODNS universal gateway (all registries via containerd's `_default` fallback), Docker Hub, or `registry.k8s.io`. |
+| **Set containerd / K8s Mirror** | Configure the **containerd** runtime (Kubernetes nodes, k3s, RKE2, containerd CRI) via `/etc/containerd/certs.d`, enable `config_path`, and restart containerd. Pick the XODNS universal gateway (all registries via containerd's `_default` fallback), `registry.k8s.io`, Docker Hub, or an Iranian Docker Hub mirror. |
 | **Reset containerd / K8s Mirror** | Remove all mirror files under `/etc/containerd/certs.d` (backing up the tree first) and restart containerd. |
 | **Set Podman Mirror** | Write a `containers-registries.conf.d` drop-in so **Podman** (and Buildah/Skopeo/CRI-O) pulls through an Iranian mirror. Same mirror list as containerd; a universal gateway maps `docker.io`, `registry.k8s.io`, `gcr.io`, `quay.io`, and `nvcr.io` at once. No restart needed. |
 | **Reset Podman Mirror** | Remove the Podman mirror drop-in (keeping a timestamped backup). |
 | **Test Mirror Health** | Report the configured mirror's latency, HTTP reachability, and a real `hello-world` test pull. |
-| **Install Docker Compose** | Install or update the `docker-compose-plugin`. |
 
 ### 4 · Package Registries
 
@@ -206,7 +209,7 @@ Docker is then restarted automatically with `systemctl restart docker` to apply 
 
 ## ☸️ containerd / Kubernetes Registry Mirror
 
-Kubernetes nodes don't pull through the Docker daemon — they talk to **containerd** (or CRI-O / Podman) directly, so `/etc/docker/daemon.json` has no effect on `kubeadm`, k3s, RKE2, or `crictl` pulls. The **Set containerd / K8s Mirror** option (Docker Tools → 5) handles this by writing containerd's native `hosts.toml` under `/etc/containerd/certs.d`, enabling `config_path` in `/etc/containerd/config.toml`, and restarting containerd.
+Kubernetes nodes don't pull through the Docker daemon — they talk to **containerd** (or CRI-O / Podman) directly, so `/etc/docker/daemon.json` has no effect on `kubeadm`, k3s, RKE2, or `crictl` pulls. The **Set containerd / K8s Mirror** option (under Docker Tools) handles this by writing containerd's native `hosts.toml` under `/etc/containerd/certs.d`, enabling `config_path` in `/etc/containerd/config.toml`, and restarting containerd.
 
 The menu is split into two groups. The first three are [XODNS](https://xodns.net) gateways that cover **all** registries (or the full Kubernetes registry); the rest are the Iranian Docker Hub mirrors (the same list used for the Docker daemon proxy), scoped to `docker.io`:
 
@@ -241,7 +244,7 @@ crictl pull registry.k8s.io/pause:3.10
 
 ## 🦭 Podman Registry Mirror
 
-Podman (and the rest of the [github.com/containers](https://github.com/containers) stack — **Buildah, Skopeo, CRI-O**) does **not** read `/etc/docker/daemon.json` or containerd's `/etc/containerd/certs.d`. It has its own config at `containers-registries.conf`. The **Set Podman Mirror** option (Docker Tools → 7) writes a drop-in file at `/etc/containers/registries.conf.d/001-iran-mirror.conf`, leaving your main `registries.conf` untouched.
+Podman (and the rest of the [github.com/containers](https://github.com/containers) stack — **Buildah, Skopeo, CRI-O**) does **not** read `/etc/docker/daemon.json` or containerd's `/etc/containerd/certs.d`. It has its own config at `containers-registries.conf`. The **Set Podman Mirror** option (under Docker Tools) writes a drop-in file at `/etc/containers/registries.conf.d/001-iran-mirror.conf`, leaving your main `registries.conf` untouched.
 
 It offers the **same mirror list** as the containerd option. For each upstream it writes a pull-through block:
 
