@@ -244,6 +244,38 @@ registry_proxies=(
 	"mirror-docker.runflare.com"
 )
 
+# containerd / Kubernetes registry mirrors.
+# These configure the containerd runtime directly (/etc/containerd/certs.d),
+# which is what Kubernetes nodes (kubeadm, k3s, RKE2), CRI-O and Podman use —
+# the classic Docker daemon.json does NOT apply there.
+#
+# containerd's hosts.toml maps ONE upstream registry per host file:
+#   - upstream "_default": a universal gateway that proxies EVERY registry at
+#     once via containerd's ?ns= fallback (one file covers docker.io,
+#     registry.k8s.io, gcr.io, quay.io, ...). Only mirrors that explicitly
+#     advertise this behavior belong here.
+#   - upstream "docker.io" / "registry.k8s.io" / ...: scopes the mirror to
+#     that single registry.
+#
+# Each entry is keyed by display name with a matching host + upstream.
+#
+# "Universal" and K8s-specific entries are the XODNS endpoints that document
+# multi-registry support (see https://mirror.xodns.net, https://k8s-mirror.xodns.net).
+#
+# The Iranian Docker Hub mirrors from $registry_proxies are offered too, but
+# scoped to docker.io only — they mirror Docker Hub, not registry.k8s.io/gcr/quay.
+containerd_mirror_options=("XODNS Universal (all registries)" "XODNS Kubernetes (registry.k8s.io)" "XODNS Docker Hub")
+declare -A containerd_mirror_hosts=(
+    ["XODNS Universal (all registries)"]="mirror.xodns.net"
+    ["XODNS Kubernetes (registry.k8s.io)"]="k8s-mirror.xodns.net"
+    ["XODNS Docker Hub"]="docker-mirror.xodns.net"
+)
+declare -A containerd_mirror_upstreams=(
+    ["XODNS Universal (all registries)"]="_default"
+    ["XODNS Kubernetes (registry.k8s.io)"]="registry.k8s.io"
+    ["XODNS Docker Hub"]="docker.io"
+)
+
 # DNS Management Functions
 backup_resolv() {
     cp /etc/resolv.conf "/etc/resolv.conf.bak.$(date +%Y%m%d_%H%M%S)"
@@ -389,6 +421,18 @@ show_status() {
         fi
     else
         echo -e "${GREEN}Docker:${NC}          ${RED}not installed${NC}"
+    fi
+
+    # containerd / Kubernetes registry mirror (separate from Docker daemon)
+    local containerd_mirror=""
+    if [ -d /etc/containerd/certs.d ]; then
+        containerd_mirror=$(grep -rhoE '\[host\."https?://[^"]+' /etc/containerd/certs.d 2>/dev/null \
+            | sed -E 's#.*https?://##' | sort -u | paste -sd ', ' -)
+    fi
+    if [ -n "$containerd_mirror" ]; then
+        echo -e "${GREEN}containerd mirror:${NC} ${YELLOW}CHANGED${NC} -> ${YELLOW}${containerd_mirror}${NC}"
+    elif command -v containerd >/dev/null 2>&1 || [ -S /run/containerd/containerd.sock ]; then
+        echo -e "${GREEN}containerd mirror:${NC} ${CYAN}default (none configured)${NC}"
     fi
 
     # Package registries: show only the ones that have been changed from
@@ -744,6 +788,147 @@ test_mirror_health() {
     fi
 }
 
+# Configure the containerd runtime to pull images through a mirror.
+# This is what Kubernetes nodes (kubeadm/k3s/RKE2), CRI-O and Podman use —
+# docker daemon.json does NOT affect them. We write a hosts.toml under
+# /etc/containerd/certs.d and make sure containerd's config_path points there.
+set_containerd_mirror() {
+    if ! command -v containerd >/dev/null 2>&1 && [ ! -S /run/containerd/containerd.sock ]; then
+        echo -e "${CYAN}containerd not detected.${NC} This option targets Kubernetes/containerd nodes."
+        read -rp "Configure anyway (write the files for a later containerd install)? (y/N): " go
+        [[ "$go" =~ ^[Yy]$ ]] || return
+    fi
+
+    # Build a combined menu:
+    #   1) curated containerd gateways (XODNS: universal, k8s, docker hub)
+    #   2) the Iranian Docker Hub mirrors from $registry_proxies, each scoped
+    #      to docker.io (they mirror Docker Hub only, not k8s/gcr/quay).
+    # Parallel arrays keep the host + upstream for whatever the user picks.
+    local menu_hosts=() menu_upstreams=() menu_labels=()
+    local name
+    for name in "${containerd_mirror_options[@]}"; do
+        menu_hosts+=("${containerd_mirror_hosts[$name]}")
+        menu_upstreams+=("${containerd_mirror_upstreams[$name]}")
+        menu_labels+=("$name")
+    done
+    for proxy in "${registry_proxies[@]}"; do
+        menu_hosts+=("$proxy")
+        menu_upstreams+=("docker.io")
+        menu_labels+=("$proxy  (Docker Hub only)")
+    done
+
+    echo
+    echo -e "${CYAN}Select containerd / Kubernetes registry mirror:${NC}"
+    echo -e "${CYAN}  Universal/K8s gateways cover all registries; the rest mirror Docker Hub only.${NC}"
+    local i
+    for i in "${!menu_labels[@]}"; do
+        echo "  $((i + 1))) ${menu_labels[$i]}"
+    done
+    echo "  0) Back"
+    echo
+    read -rp "Select (0-${#menu_labels[@]}): " c_choice
+
+    if [[ "$c_choice" == "0" ]]; then return; fi
+    if [[ ! "$c_choice" =~ ^[0-9]+$ ]] || (( c_choice < 1 || c_choice > ${#menu_labels[@]} )); then
+        echo -e "${RED}Invalid option${NC}"; return
+    fi
+
+    local host upstream
+    host="${menu_hosts[$((c_choice - 1))]}"
+    upstream="${menu_upstreams[$((c_choice - 1))]}"
+
+    local certs_dir="/etc/containerd/certs.d"
+    local target="$certs_dir/$upstream"
+    mkdir -p "$target"
+
+    local hosts_file="$target/hosts.toml"
+    # Back up any existing hosts.toml for this upstream
+    [ -f "$hosts_file" ] && cp "$hosts_file" "${hosts_file}.bak.$(date +%Y%m%d_%H%M%S)"
+
+    # For the "_default" fallback, containerd forwards the real registry via
+    # ?ns=<upstream>, so server must be "https://_default". Otherwise the
+    # server is the real upstream registry and the mirror serves it.
+    local server_url
+    if [ "$upstream" = "_default" ]; then
+        server_url="https://_default"
+    else
+        server_url="https://$upstream"
+    fi
+
+    cat > "$hosts_file" <<EOF
+server = "$server_url"
+
+[host."https://$host"]
+  capabilities = ["pull", "resolve"]
+EOF
+
+    echo -e "${GREEN}Wrote:${NC} $hosts_file"
+
+    # Make sure containerd actually reads certs.d (older default is empty).
+    local cfg="/etc/containerd/config.toml"
+    if [ -f "$cfg" ]; then
+        if grep -qE 'config_path\s*=\s*""' "$cfg"; then
+            cp "$cfg" "${cfg}.bak.$(date +%Y%m%d_%H%M%S)"
+            sed -i -E 's#config_path\s*=\s*""#config_path = "/etc/containerd/certs.d"#g' "$cfg"
+            echo -e "${CYAN}Enabled certs.d path in${NC} $cfg"
+        elif ! grep -q "/etc/containerd/certs.d" "$cfg"; then
+            echo -e "${CYAN}Note:${NC} Could not confirm config_path in $cfg."
+            echo -e "       Ensure the CRI registry section has: config_path = \"/etc/containerd/certs.d\""
+        fi
+    else
+        echo -e "${CYAN}Note:${NC} $cfg not found. If containerd uses a generated/default config,"
+        echo -e "       run: containerd config default | tee $cfg  then set config_path to /etc/containerd/certs.d"
+    fi
+
+    # Restart containerd to apply
+    echo -e "${CYAN}Restarting containerd...${NC}"
+    if systemctl restart containerd 2>/dev/null; then
+        echo -e "${GREEN}containerd restarted.${NC}"
+    else
+        echo -e "${RED}Warning:${NC} containerd restart failed (or not managed by systemd)."
+        echo -e "         Restart it manually to apply the mirror."
+    fi
+
+    echo -e "${GREEN}containerd mirror set:${NC} $host  (upstream: $upstream)"
+    # Show a verify command that matches the chosen upstream
+    case "$upstream" in
+        _default|registry.k8s.io)
+            echo -e "${CYAN}Verify with:${NC} crictl pull registry.k8s.io/pause:3.10" ;;
+        docker.io)
+            echo -e "${CYAN}Verify with:${NC} crictl pull docker.io/library/nginx:alpine" ;;
+        *)
+            echo -e "${CYAN}Verify with:${NC} crictl pull ${upstream}/<some-image>" ;;
+    esac
+}
+
+# Remove all containerd mirror config we may have written and restart containerd.
+reset_containerd_mirror() {
+    local certs_dir="/etc/containerd/certs.d"
+    if [ ! -d "$certs_dir" ]; then
+        echo -e "${CYAN}No $certs_dir found — nothing to reset.${NC}"
+        return
+    fi
+
+    echo
+    echo -e "${RED}This removes ALL mirror files under $certs_dir.${NC}"
+    read -rp "Continue? (y/N): " go
+    [[ "$go" =~ ^[Yy]$ ]] || { echo -e "${CYAN}Cancelled.${NC}"; return; }
+
+    # Back up the whole certs.d tree before removing it
+    local backup="${certs_dir}.bak.$(date +%Y%m%d_%H%M%S)"
+    cp -r "$certs_dir" "$backup"
+    echo -e "${CYAN}Backed up to:${NC} $backup"
+
+    rm -rf "${certs_dir:?}/"*
+
+    echo -e "${CYAN}Restarting containerd...${NC}"
+    if systemctl restart containerd 2>/dev/null; then
+        echo -e "${GREEN}containerd mirrors removed and service restarted.${NC}"
+    else
+        echo -e "${RED}Warning:${NC} Config cleared but containerd restart failed. Restart it manually."
+    fi
+}
+
 # Install or update the Docker Compose plugin
 install_compose() {
     if ! command -v docker >/dev/null 2>&1; then
@@ -1037,7 +1222,7 @@ dns_menu() {
 }
 
 docker_menu() {
-    local items=("Install Docker" "Update Docker" "Set Docker Proxy" "Reset Docker Proxy" "Test Mirror Health" "Install Docker Compose")
+    local items=("Install Docker" "Update Docker" "Set Docker Proxy" "Reset Docker Proxy" "Set containerd / K8s Mirror" "Reset containerd / K8s Mirror" "Test Mirror Health" "Install Docker Compose")
     while true; do
         echo
         echo -e "${CYAN}Docker Tools:${NC}"
@@ -1050,8 +1235,10 @@ docker_menu() {
             2) update_docker ;;
             3) set_docker_proxy ;;
             4) reset_docker_proxy ;;
-            5) test_mirror_health ;;
-            6) install_compose ;;
+            5) set_containerd_mirror ;;
+            6) reset_containerd_mirror ;;
+            7) test_mirror_health ;;
+            8) install_compose ;;
             0) return ;;
             *) echo -e "${RED}Invalid choice${NC}" ;;
         esac

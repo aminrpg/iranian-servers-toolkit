@@ -35,6 +35,7 @@ This script wraps all of that into one menu. Pick an option, and it handles the 
 - 🪞 **Iranian Docker registry mirrors** — pull images through 15 local mirrors, with an unset option to remove them again.
 - ⚡ **Auto-pick the fastest mirror** — benchmarks every mirror with `ping` and selects the lowest-latency one.
 - 🩺 **Mirror health test** — checks your configured Docker mirror's latency, HTTP reachability, and a real test pull.
+- ☸️ **containerd / Kubernetes mirror** — configure the containerd runtime (what k8s nodes, k3s, RKE2, CRI-O and Podman actually use) to pull through an Iranian/anti-sanctions mirror via `/etc/containerd/certs.d` — covering Docker Hub, `registry.k8s.io`, `gcr.io`, `quay.io` and more. `daemon.json` alone does not reach these.
 - 🧩 **Docker Compose installer** — install or update the Compose plugin in one step.
 - 📦 **Package registry mirrors** — point **APT, DNF/YUM, Pacman, npm, Yarn, pip, Composer, Go, NuGet, and Maven/Gradle** at fast Iranian mirrors (per-user configs land in the right home, not root's).
 - 🐙 **GitHub proxy** — route `git clone`/fetch through an Iranian GitHub proxy when GitHub is slow or blocked (reversible, via git's `insteadOf`).
@@ -89,7 +90,7 @@ The toolkit is organized into a main menu with category submenus:
 > Choose **`0`** to exit. The script prints a short goodbye (toolkit name + author) and exits with status `0` (success).
 
 ### 1 · Show Status
-A one-screen dashboard: OS, package manager, kernel, current DNS servers, number of DNS backups, and Docker version. It also reports the **Docker Proxy** and any **package registries** (npm, pip, Maven, Composer, Go, NuGet, GitHub proxy, and the system package manager) — anything changed from its default is flagged `CHANGED` in a highlight color, so you can see at a glance what's been switched. If nothing has been changed, it says so.
+A one-screen dashboard: OS, package manager, kernel, current DNS servers, number of DNS backups, and Docker version. It also reports the **Docker Proxy**, the **containerd mirror** (for Kubernetes nodes), and any **package registries** (npm, pip, Maven, Composer, Go, NuGet, GitHub proxy, and the system package manager) — anything changed from its default is flagged `CHANGED` in a highlight color, so you can see at a glance what's been switched. If nothing has been changed, it says so.
 
 ### 2 · DNS Tools
 
@@ -107,6 +108,8 @@ A one-screen dashboard: OS, package manager, kernel, current DNS servers, number
 | **Update Docker** | Re-runs the official installer to upgrade Docker. |
 | **Set Docker Proxy** | Choose a registry mirror (or auto-select the fastest) and write `/etc/docker/daemon.json`, then restart Docker. |
 | **Reset Docker Proxy** | Remove the mirror from `daemon.json` (backing it up first) and restart Docker. |
+| **Set containerd / K8s Mirror** | Configure the **containerd** runtime (Kubernetes nodes, k3s, RKE2, CRI-O, Podman) via `/etc/containerd/certs.d`, enable `config_path`, and restart containerd. Pick the XODNS universal gateway (all registries via containerd's `_default` fallback), Docker Hub, or `registry.k8s.io`. |
+| **Reset containerd / K8s Mirror** | Remove all mirror files under `/etc/containerd/certs.d` (backing up the tree first) and restart containerd. |
 | **Test Mirror Health** | Report the configured mirror's latency, HTTP reachability, and a real `hello-world` test pull. |
 | **Install Docker Compose** | Install or update the `docker-compose-plugin`. |
 
@@ -198,6 +201,41 @@ The selected mirror is written to `/etc/docker/daemon.json` like this:
 
 Docker is then restarted automatically with `systemctl restart docker` to apply the change.
 
+## ☸️ containerd / Kubernetes Registry Mirror
+
+Kubernetes nodes don't pull through the Docker daemon — they talk to **containerd** (or CRI-O / Podman) directly, so `/etc/docker/daemon.json` has no effect on `kubeadm`, k3s, RKE2, or `crictl` pulls. The **Set containerd / K8s Mirror** option (Docker Tools → 5) handles this by writing containerd's native `hosts.toml` under `/etc/containerd/certs.d`, enabling `config_path` in `/etc/containerd/config.toml`, and restarting containerd.
+
+The menu is split into two groups. The first three are [XODNS](https://xodns.net) gateways that cover **all** registries (or the full Kubernetes registry); the rest are the Iranian Docker Hub mirrors (the same list used for the Docker daemon proxy), scoped to `docker.io`:
+
+| Option | Mirror host | Upstream it serves |
+|--------|-------------|--------------------|
+| **XODNS Universal (all registries)** | `mirror.xodns.net` | `_default` — every registry at once (Docker Hub, `registry.k8s.io`, `gcr.io`, `quay.io`, `nvcr.io`, Helm…) via containerd's `?ns=` fallback |
+| **XODNS Kubernetes** | `k8s-mirror.xodns.net` | `registry.k8s.io` |
+| **XODNS Docker Hub** | `docker-mirror.xodns.net` | `docker.io` |
+| **Iranian Docker Hub mirrors** | `docker.arvancloud.ir`, `focker.ir`, `mirrors.pardisco.co`, `docker.iranserver.com`, `mirror-docker.runflare.com`, and the rest of the registry-proxy list | `docker.io` only |
+
+> **Why the split?** A containerd `hosts.toml` maps one upstream registry per file. Only a mirror that advertises multi-registry proxying can serve `registry.k8s.io`/`gcr.io`/`quay.io` — that's why those are scoped to the XODNS universal/K8s gateways. The Iranian Docker Hub mirrors are offered too, but only for `docker.io`; pointing them at `registry.k8s.io` would just fail.
+
+The universal option writes a single `_default/hosts.toml` like this:
+
+```toml
+# /etc/containerd/certs.d/_default/hosts.toml
+server = "https://_default"
+
+[host."https://mirror.xodns.net"]
+  capabilities = ["pull", "resolve"]
+```
+
+Verify a pull afterwards with:
+
+```bash
+crictl pull registry.k8s.io/pause:3.10
+```
+
+> **Reset containerd / K8s Mirror** removes everything under `/etc/containerd/certs.d` (backing up the whole tree first) and restarts containerd. XODNS mirror endpoints are sourced from [xodns.net](https://xodns.net); to add your own, edit the `containerd_mirror_*` arrays near the top of `start.sh`.
+>
+> XODNS DNS answers only **registered** IPs. If this is a cluster with a changing egress IP, keep it registered from your XODNS panel (they expose a `sync-ip` webhook you can run from cron or a CI step). That token is per-account and not stored by this toolkit.
+
 ## 📦 Supported Package Registry Mirrors
 
 Available under **Package Registries**. Each writes a backup before changing anything, and each list includes a **Reset to Official** entry to revert.
@@ -236,6 +274,7 @@ Available under **Package Registries**. Each writes a backup before changing any
 - **Restore** — `restore_dns_backup()` lists every `/etc/resolv.conf.bak.*` (newest first, with timestamps) and copies the chosen one back — after backing up the current file so the restore is itself reversible.
 - **Docker install/update** — refreshes package lists via the detected package manager, installs `curl`, and pipes the official `https://get.docker.com` script into `sh`. Installation is skipped if Docker is already detected.
 - **Registry mirror** — writes `/etc/docker/daemon.json` and restarts the Docker daemon. The auto-select mode uses `ping` + `awk` to compare float latencies across all mirrors; the reset path uses `jq` when available (falling back to an empty config) and backs up `daemon.json` first.
+- **containerd mirror** — `set_containerd_mirror()` writes a `hosts.toml` under `/etc/containerd/certs.d/<upstream>` (`_default` for the universal gateway), flips `config_path` to `/etc/containerd/certs.d` in `config.toml` if it's still empty, backs up any file it replaces, and restarts containerd. The reset backs up and clears the whole `certs.d` tree.
 - **APT mirror** — `set_apt_mirror()` detects the classic `sources.list` or the newer deb822 `ubuntu.sources`, backs it up, and `sed`-rewrites known upstream hosts to the chosen Iranian mirror before running `apt-get update`.
 - **Diagnostics** — the connectivity doctor and DNS benchmark are read-only (they change no config); they only probe endpoints and report.
 - **Server setup** — timezone/NTP use `timedatectl` (with a symlink fallback), swap uses `fallocate` (falling back to `dd`) and persists via `/etc/fstab`, SSH hardening edits `sshd_config` behind a confirmation and validates with `sshd -t` before restarting, and firewall setup auto-selects UFW or firewalld. Every file touched is backed up first.

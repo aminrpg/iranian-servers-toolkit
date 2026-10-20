@@ -37,6 +37,7 @@
 - 🪞 **میرورهای ایرانی رجیستری Docker** — دریافت ایمیج از ۱۵ میرور محلی، با گزینه‌ی حذف دوباره.
 - ⚡ **انتخاب خودکار سریع‌ترین میرور** — بنچمارک همه‌ی میرورها با `ping` و انتخاب کم‌تأخیرترین.
 - 🩺 **تست سلامت میرور** — بررسی تأخیر، دسترس‌پذیری HTTP و یک pull واقعی برای میرور تنظیم‌شده.
+- ☸️ **میرور containerd / کوبرنتیز** — تنظیم رانتایم containerd (چیزی که نودهای k8s، k3s، RKE2، CRI-O و Podman واقعاً از آن استفاده می‌کنند) برای دریافت ایمیج از یک میرور ایرانی/ضدتحریم از طریق `/etc/containerd/certs.d` — پوشش Docker Hub، `registry.k8s.io`، `gcr.io`، `quay.io` و بیشتر. تنها `daemon.json` به این‌ها نمی‌رسد.
 - 🧩 **نصب Docker Compose** — نصب یا به‌روزرسانی افزونه‌ی Compose در یک مرحله.
 - 📦 **میرورهای رجیستری پکیج‌ها** — تنظیم **APT، DNF/YUM، Pacman، npm، Yarn، pip، Composer، Go، NuGet و Maven/Gradle** روی میرورهای سریع ایرانی (پیکربندی هر کاربر در خانه‌ی خودش قرار می‌گیرد، نه root).
 - 🐙 **پروکسی گیت‌هاب** — عبور `git clone`/fetch از یک پروکسی گیت‌هاب ایرانی وقتی گیت‌هاب کند یا مسدود است (برگشت‌پذیر، با `insteadOf` گیت).
@@ -107,7 +108,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 > برای خروج **`0`** را بزنید. اسکریپت یک پیام خداحافظی کوتاه (نام ابزار + سازنده) چاپ می‌کند و با وضعیت `0` (خروج موفق) بسته می‌شود.
 
 ### ۱ · نمایش وضعیت (Show Status)
-یک داشبورد یک‌صفحه‌ای: سیستم‌عامل، پکیج‌منیجر، کرنل، DNSهای فعلی، تعداد پشتیبان‌های DNS و نسخه‌ی Docker. همچنین وضعیت **پروکسی Docker** و هر **رجیستری پکیجی** (npm، pip، Maven، Composer، Go، NuGet، پروکسی گیت‌هاب و پکیج‌منیجر سیستم) را نشان می‌دهد — هر موردی که از پیش‌فرض تغییر کرده باشد با برچسب `CHANGED` و رنگ متمایز مشخص می‌شود تا یک‌نگاهه ببینید چه چیزی عوض شده است. اگر چیزی تغییر نکرده باشد، همان را اعلام می‌کند.
+یک داشبورد یک‌صفحه‌ای: سیستم‌عامل، پکیج‌منیجر، کرنل، DNSهای فعلی، تعداد پشتیبان‌های DNS و نسخه‌ی Docker. همچنین وضعیت **پروکسی Docker**، **میرور containerd** (برای نودهای کوبرنتیز) و هر **رجیستری پکیجی** (npm، pip، Maven، Composer، Go، NuGet، پروکسی گیت‌هاب و پکیج‌منیجر سیستم) را نشان می‌دهد — هر موردی که از پیش‌فرض تغییر کرده باشد با برچسب `CHANGED` و رنگ متمایز مشخص می‌شود تا یک‌نگاهه ببینید چه چیزی عوض شده است. اگر چیزی تغییر نکرده باشد، همان را اعلام می‌کند.
 
 ### ۲ · ابزارهای DNS
 
@@ -125,6 +126,8 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 | **Update Docker** | اجرای دوباره‌ی نصب‌کننده‌ی رسمی برای به‌روزرسانی Docker. |
 | **Set Docker Proxy** | انتخاب میرور (یا انتخاب خودکار سریع‌ترین)، نوشتن `/etc/docker/daemon.json` و ری‌استارت Docker. |
 | **Reset Docker Proxy** | حذف میرور از `daemon.json` (با پشتیبان‌گیری) و ری‌استارت Docker. |
+| **Set containerd / K8s Mirror** | تنظیم رانتایم **containerd** (نودهای کوبرنتیز، k3s، RKE2، CRI-O، Podman) از طریق `/etc/containerd/certs.d`، فعال‌سازی `config_path` و ری‌استارت containerd. گزینه‌ها: درگاه جامع XODNS (همه‌ی رجیستری‌ها با fallback `_default` کانتینرد)، Docker Hub یا `registry.k8s.io`. |
+| **Reset containerd / K8s Mirror** | حذف همه‌ی فایل‌های میرور از `/etc/containerd/certs.d` (ابتدا پشتیبان کل درخت) و ری‌استارت containerd. |
 | **Test Mirror Health** | گزارش تأخیر، دسترس‌پذیری HTTP و یک pull واقعی `hello-world` برای میرور تنظیم‌شده. |
 | **Install Docker Compose** | نصب یا به‌روزرسانی `docker-compose-plugin`. |
 
@@ -235,6 +238,41 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 <div dir="rtl">
 
 سپس Docker به‌صورت خودکار با `systemctl restart docker` ری‌استارت می‌شود تا تغییر اعمال شود.
+
+## ☸️ میرور رجیستری containerd / کوبرنتیز
+
+نودهای کوبرنتیز از طریق دیمن Docker ایمیج نمی‌کشند — مستقیماً با **containerd** (یا CRI-O / Podman) حرف می‌زنند، بنابراین `/etc/docker/daemon.json` هیچ اثری روی pullهای `kubeadm`، k3s، RKE2 یا `crictl` ندارد. گزینه‌ی **Set containerd / K8s Mirror** (ابزارهای Docker → ۵) این را با نوشتن `hosts.toml` بومی containerd در `/etc/containerd/certs.d`، فعال‌کردن `config_path` در `/etc/containerd/config.toml` و ری‌استارت containerd حل می‌کند.
+
+منو به دو گروه تقسیم شده است. سه گزینه‌ی اول درگاه‌های [XODNS](https://xodns.net) هستند که **همه‌ی** رجیستری‌ها (یا کل رجیستری کوبرنتیز) را پوشش می‌دهند؛ بقیه همان میرورهای Docker Hub ایرانی (همان فهرست پروکسی دیمن Docker) هستند که به `docker.io` محدود شده‌اند:
+
+| گزینه | میزبان میرور | رجیستری مقصد |
+|--------|-------------|--------------------|
+| **XODNS Universal (all registries)** | `mirror.xodns.net` | `_default` — همه‌ی رجیستری‌ها یکجا (Docker Hub، `registry.k8s.io`، `gcr.io`، `quay.io`، `nvcr.io`، Helm…) با fallback `?ns=` کانتینرد |
+| **XODNS Kubernetes** | `k8s-mirror.xodns.net` | `registry.k8s.io` |
+| **XODNS Docker Hub** | `docker-mirror.xodns.net` | `docker.io` |
+| **میرورهای Docker Hub ایرانی** | `docker.arvancloud.ir`، `focker.ir`، `mirrors.pardisco.co`، `docker.iranserver.com`، `mirror-docker.runflare.com` و بقیه‌ی فهرست پروکسی | فقط `docker.io` |
+
+> **چرا این تفکیک؟** هر فایل `hosts.toml` در کانتینرد فقط یک رجیستری مقصد را نگاشت می‌کند. تنها میروری که صراحتاً از آینه‌سازی چندرجیستری پشتیبانی کند می‌تواند `registry.k8s.io`/`gcr.io`/`quay.io` را سرو کند — به همین دلیل این‌ها به درگاه‌های جامع/کوبرنتیز XODNS محدود شده‌اند. میرورهای Docker Hub ایرانی هم ارائه می‌شوند، اما فقط برای `docker.io`؛ اشاره‌دادن آن‌ها به `registry.k8s.io` صرفاً شکست می‌خورد.
+
+گزینه‌ی جامع یک فایل واحد `_default/hosts.toml` می‌نویسد:
+
+```toml
+# /etc/containerd/certs.d/_default/hosts.toml
+server = "https://_default"
+
+[host."https://mirror.xodns.net"]
+  capabilities = ["pull", "resolve"]
+```
+
+پس از آن با این دستور تست کنید:
+
+```bash
+crictl pull registry.k8s.io/pause:3.10
+```
+
+> **Reset containerd / K8s Mirror** همه‌ی فایل‌های زیر `/etc/containerd/certs.d` را حذف می‌کند (ابتدا کل درخت پشتیبان می‌شود) و containerd را ری‌استارت می‌کند. نقاط میرور XODNS از [xodns.net](https://xodns.net) گرفته شده‌اند؛ برای افزودن میرور دلخواه، آرایه‌های `containerd_mirror_*` در بالای `start.sh` را ویرایش کنید.
+>
+> دی‌ان‌اس XODNS فقط به آی‌پی‌های **ثبت‌شده** پاسخ می‌دهد. اگر کلاستر آی‌پی خروجی متغیر دارد، آن را از پنل XODNS ثبت‌شده نگه دارید (یک وب‌هوک `sync-ip` دارند که می‌توانید از cron یا یک قدم CI صدا بزنید). آن توکن مخصوص هر حساب است و این ابزار آن را ذخیره نمی‌کند.
 
 ## 📦 میرورهای رجیستری پکیج پشتیبانی‌شده
 
