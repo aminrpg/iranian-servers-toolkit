@@ -128,7 +128,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 | **Install Podman** | نصب Podman از طریق پکیج‌منیجر تشخیص‌داده‌شده. اگر نصب باشد رد می‌شود. |
 | **Install containerd** | نصب رانتایم containerd، ساخت `/etc/containerd/config.toml` پیش‌فرض در صورت نبود و فعال‌کردن سرویس. ابتدا `containerd` سپس `containerd.io` را امتحان می‌کند. |
 | **Install Buildah & Skopeo** | نصب Buildah و Skopeo (بقیه‌ی مجموعه‌ی containers که همان `registries.conf` پادمن را به اشتراک می‌گذارند). |
-| **Fix GitLab APT Source (403)** | رفع خطای HTTP 403 روی منبع APT مربوط به `packages.gitlab.com` در ایران. نوع نصب (CE یا EE) را تشخیص می‌دهد: برای `gitlab-ce` منبع را به [میرور Framasoft](https://apt.gitlab.mirror.framasoft.org) (ارائه‌شده خصوصاً برای کشورهای تحریمی) بازنویسی می‌کند، کلید GPG را نصب و فایل اصلی را پشتیبان می‌گیرد، سپس `apt-get update` را اجرا می‌کند. برای `gitlab-ee` گزینه‌ها (تغییر DNS یا مهاجرت به CE) را توضیح می‌دهد. |
+| **Fix Blocked APT Sources (403)** | اسکن همه‌ی فایل‌های APT برای دامنه‌های شناخته‌شده‌ی بلاک‌شده در ایران و رفع آن‌ها. منابع **GitLab CE** (به `packages.gitlab.com`) به [میرور Framasoft](https://apt.gitlab.mirror.framasoft.org) بازنویسی می‌شوند. **GitLab EE** و **BigBlueButton** (به `ubuntu.bigbluebutton.org`) میرور عمومی ندارند — تابع گزینه‌های DNS را توضیح داده و پیشنهاد می‌دهد تا پاسخ خطا از `apt update` حذف شود. پیش از هر تغییر از فایل‌ها پشتیبان می‌گیرد. |
 | **Install Docker Compose** | نصب یا به‌روزرسانی `docker-compose-plugin`. |
 | **Set Docker Proxy** | انتخاب میرور (یا انتخاب خودکار سریع‌ترین)، نوشتن `/etc/docker/daemon.json` و ری‌استارت Docker. |
 | **Reset Docker Proxy** | حذف میرور از `daemon.json` (با پشتیبان‌گیری) و ری‌استارت Docker. |

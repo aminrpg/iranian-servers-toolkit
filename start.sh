@@ -772,125 +772,172 @@ install_buildah_skopeo() {
     fi
 }
 
-# Fix a broken packages.gitlab.com APT source (HTTP 403 in Iran).
-# The function finds any .list or .sources file pointing at packages.gitlab.com,
-# identifies whether it is gitlab-ce or gitlab-ee, and rewrites it to use a
-# mirror that is reachable from inside Iran, then runs apt-get update.
+# Fix broken APT sources that return HTTP 403 in Iran.
+# Handles: packages.gitlab.com (gitlab-ce → Framasoft mirror, gitlab-ee → DNS advice)
+#          ubuntu.bigbluebutton.org  (no public mirror → DNS advice)
 #
-# gitlab-ce  → Framasoft mirror (apt.gitlab.mirror.framasoft.org), explicitly
-#              provided for sanctioned countries including Iran.
-# gitlab-ee  → No public APT mirror exists for EE. The function explains the
-#              options: switch DNS to one that unblocks packages.gitlab.com
-#              (e.g. XODNS/Shecan), or migrate to gitlab-ce.
-fix_gitlab_apt_source() {
+# The function scans all APT source files, identifies known blocked domains,
+# applies a mirror rewrite where one exists, and explains options where none does.
+fix_blocked_apt_sources() {
     if [ "$PKG_MANAGER" != "apt" ]; then
         echo -e "${CYAN}This fix only applies to Debian/Ubuntu (apt) systems.${NC}"
         return
     fi
 
-    echo
-    echo -e "${CYAN}Scanning for broken packages.gitlab.com APT sources...${NC}"
-
-    # Collect every file under apt that references packages.gitlab.com
-    local broken_files=()
-    while IFS= read -r f; do
-        broken_files+=("$f")
-    done < <(grep -rlE 'packages\.gitlab\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null)
-
-    if [ ${#broken_files[@]} -eq 0 ]; then
-        echo -e "${GREEN}No packages.gitlab.com sources found — nothing to fix.${NC}"
-        return
-    fi
-
-    echo -e "${GREEN}Found:${NC}"
-    local f
-    for f in "${broken_files[@]}"; do
-        echo "  $f"
-        grep -E 'packages\.gitlab\.com' "$f" | sed 's/^/    /'
-    done
-    echo
-
-    # Determine edition (ce or ee) from the file content
-    local edition=""
-    for f in "${broken_files[@]}"; do
-        if grep -qE 'gitlab-ee' "$f" 2>/dev/null; then
-            edition="ee"; break
-        elif grep -qE 'gitlab-ce' "$f" 2>/dev/null; then
-            edition="ce"
-        fi
-    done
-
-    if [ "$edition" = "ee" ]; then
-        echo -e "${RED}GitLab EE detected.${NC}"
-        echo -e "No public APT mirror exists for GitLab EE packages from inside Iran."
-        echo -e "Your options:"
-        echo -e "  ${CYAN}1)${NC} Switch your DNS to XODNS, Shecan, or another resolver that"
-        echo -e "     unblocks packages.gitlab.com (DNS Tools -> Set DNS), then retry apt."
-        echo -e "  ${CYAN}2)${NC} Migrate from EE to CE:"
-        echo -e "     https://docs.gitlab.com/ee/downgrade_ee_to_ce/"
-        echo -e "     CE covers most self-hosted use-cases and its packages are mirrored."
-        return
-    fi
-
-    # gitlab-ce path — rewrite to Framasoft mirror
-    # Detect distro codename
-    local codename
+    # Detect distro codename once — used for mirror URL construction
+    local codename os_id
     codename=$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")
-    if [ -z "$codename" ]; then
-        codename=$(lsb_release -cs 2>/dev/null)
-    fi
-
-    local os_id
+    [ -z "$codename" ] && codename=$(lsb_release -cs 2>/dev/null)
     os_id=$(. /etc/os-release 2>/dev/null && echo "${ID:-debian}")
 
-    # Map codename to a path fragment the Framasoft mirror supports
-    local mirror_path=""
-    case "$codename" in
-        noble|jammy|focal)   mirror_path="ubuntu/$codename" ;;
-        trixie|bookworm|bullseye) mirror_path="debian/$codename" ;;
-        *)
-            echo -e "${RED}Unsupported codename:${NC} $codename"
-            echo -e "Framasoft supports: Ubuntu noble/jammy/focal, Debian trixie/bookworm/bullseye."
-            echo -e "As an alternative, switch DNS (DNS Tools -> Set DNS) to unblock packages.gitlab.com."
-            return
-            ;;
-    esac
-
-    local mirror_base="https://apt.gitlab.mirror.framasoft.org/gitlab/gitlab-ce"
-    local new_deb_line="deb [signed-by=/usr/share/keyrings/gitlab-mirror-framasoft.gpg] ${mirror_base}/${mirror_path} ${codename} main"
-
-    echo -e "${CYAN}Will rewrite packages.gitlab.com -> Framasoft mirror for gitlab-ce (${codename}).${NC}"
-    echo -e "New source line:"
-    echo -e "  $new_deb_line"
     echo
-    read -rp "Apply this fix? (y/N): " go
-    [[ "$go" =~ ^[Yy]$ ]] || { echo -e "${CYAN}Cancelled.${NC}"; return; }
+    echo -e "${CYAN}Scanning APT sources for known blocked domains...${NC}"
 
-    # Add Framasoft GPG key
-    echo -e "${GREEN}Fetching Framasoft GPG key...${NC}"
-    if ! curl -fsSL "${mirror_base}/gpgkey" \
-            | gpg --dearmor -o /usr/share/keyrings/gitlab-mirror-framasoft.gpg 2>/dev/null; then
-        echo -e "${RED}Error:${NC} Failed to fetch or install the GPG key."
-        echo -e "Check your network or DNS and try again."
-        return 1
+    local found_any=0
+
+    # ── Helper: collect files referencing a pattern ──────────────────────────
+    _apt_files_for() {
+        grep -rlE "$1" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null
+    }
+
+    # ── Helper: comment out matching lines + append a replacement ─────────────
+    _rewrite_apt_files() {
+        local pattern="$1" new_line="$2"
+        local f
+        while IFS= read -r f; do
+            cp "$f" "${f}.bak.$(date +%Y%m%d_%H%M%S)"
+            sed -i -E "s|^(deb[[:space:]].*${pattern}.*)|# \1  # disabled by Iranian Servers Toolkit|g" "$f"
+            echo "$new_line" >> "$f"
+            echo -e "${GREEN}Updated:${NC} $f"
+        done < <(_apt_files_for "$pattern")
+    }
+
+    # ════════════════════════════════════════════════════════════════════════
+    # 1. packages.gitlab.com
+    # ════════════════════════════════════════════════════════════════════════
+    local gitlab_files
+    mapfile -t gitlab_files < <(_apt_files_for 'packages\.gitlab\.com')
+
+    if [ ${#gitlab_files[@]} -gt 0 ]; then
+        found_any=1
+        echo
+        echo -e "${YELLOW}── GitLab APT source ──────────────────────────────────${NC}"
+        local f
+        for f in "${gitlab_files[@]}"; do
+            echo "  $f"
+            grep -E 'packages\.gitlab\.com' "$f" | sed 's/^/    /'
+        done
+
+        # Detect edition
+        local gl_edition=""
+        for f in "${gitlab_files[@]}"; do
+            grep -qE 'gitlab-ee' "$f" 2>/dev/null && { gl_edition="ee"; break; }
+            grep -qE 'gitlab-ce' "$f" 2>/dev/null && gl_edition="ce"
+        done
+
+        if [ "$gl_edition" = "ee" ]; then
+            echo
+            echo -e "${RED}GitLab EE detected — no public APT mirror exists for EE packages.${NC}"
+            echo -e "Options:"
+            echo -e "  ${CYAN}1)${NC} Switch DNS to XODNS or Shecan (DNS Tools -> Set DNS) to"
+            echo -e "     unblock packages.gitlab.com, then retry: sudo apt update && sudo apt upgrade"
+            echo -e "  ${CYAN}2)${NC} Migrate EE → CE (CE packages are mirrored):"
+            echo -e "     https://docs.gitlab.com/ee/downgrade_ee_to_ce/"
+        else
+            # CE: rewrite to Framasoft mirror
+            local mirror_path=""
+            case "$codename" in
+                noble|jammy|focal)            mirror_path="ubuntu/$codename" ;;
+                trixie|bookworm|bullseye)     mirror_path="debian/$codename" ;;
+                *)
+                    echo -e "${RED}Unsupported codename '$codename' for Framasoft GitLab CE mirror.${NC}"
+                    echo -e "Supported: Ubuntu noble/jammy/focal, Debian trixie/bookworm/bullseye."
+                    echo -e "Fallback: switch DNS (DNS Tools -> Set DNS) to unblock packages.gitlab.com."
+                    ;;
+            esac
+
+            if [ -n "$mirror_path" ]; then
+                local gl_base="https://apt.gitlab.mirror.framasoft.org/gitlab/gitlab-ce"
+                local gl_line="deb [signed-by=/usr/share/keyrings/gitlab-mirror-framasoft.gpg] ${gl_base}/${mirror_path} ${codename} main"
+                echo
+                echo -e "${CYAN}Fix: rewrite to Framasoft GitLab CE mirror (${codename}).${NC}"
+                echo -e "New line: $gl_line"
+                read -rp "Apply? (y/N): " go
+                if [[ "$go" =~ ^[Yy]$ ]]; then
+                    echo -e "${GREEN}Fetching Framasoft GPG key...${NC}"
+                    if curl -fsSL "${gl_base}/gpgkey" \
+                            | gpg --dearmor -o /usr/share/keyrings/gitlab-mirror-framasoft.gpg 2>/dev/null; then
+                        echo -e "${GREEN}GPG key installed.${NC}"
+                        _rewrite_apt_files 'packages\.gitlab\.com' "$gl_line"
+                    else
+                        echo -e "${RED}Error:${NC} Failed to fetch GPG key. Check DNS / network and retry."
+                    fi
+                else
+                    echo -e "${CYAN}Skipped.${NC}"
+                fi
+            fi
+        fi
     fi
-    echo -e "${GREEN}GPG key installed.${NC}"
 
-    # Rewrite each broken file — back up first, then replace the broken line
-    for f in "${broken_files[@]}"; do
-        cp "$f" "${f}.bak.$(date +%Y%m%d_%H%M%S)"
-        # Comment out the old packages.gitlab.com line and append the new one
-        sed -i -E 's|^(deb[[:space:]].*packages\.gitlab\.com.*)|# \1  # disabled by Iranian Servers Toolkit|g' "$f"
-        echo "$new_deb_line" >> "$f"
-        echo -e "${GREEN}Updated:${NC} $f"
-    done
+    # ════════════════════════════════════════════════════════════════════════
+    # 2. ubuntu.bigbluebutton.org
+    # ════════════════════════════════════════════════════════════════════════
+    local bbb_files
+    mapfile -t bbb_files < <(_apt_files_for 'ubuntu\.bigbluebutton\.org')
+
+    if [ ${#bbb_files[@]} -gt 0 ]; then
+        found_any=1
+        echo
+        echo -e "${YELLOW}── BigBlueButton APT source ───────────────────────────${NC}"
+        local f
+        for f in "${bbb_files[@]}"; do
+            echo "  $f"
+            grep -E 'ubuntu\.bigbluebutton\.org' "$f" | sed 's/^/    /'
+        done
+        echo
+        echo -e "${RED}No public APT mirror exists for ubuntu.bigbluebutton.org.${NC}"
+        echo -e "BigBlueButton packages are only served from the official domain."
+        echo -e "Options:"
+        echo -e "  ${CYAN}1)${NC} Switch DNS to XODNS or Shecan (DNS Tools -> Set DNS) to"
+        echo -e "     unblock ubuntu.bigbluebutton.org, then retry:"
+        echo -e "     sudo apt update && sudo apt upgrade"
+        echo -e "  ${CYAN}2)${NC} Install via the official bbb-install.sh script after switching DNS:"
+        echo -e "     https://docs.bigbluebutton.org/administration/install/"
+        echo -e "  ${CYAN}3)${NC} Temporarily disable the source until DNS is fixed:"
+        read -rp "  Disable (comment out) the BigBlueButton source now? (y/N): " go
+        if [[ "$go" =~ ^[Yy]$ ]]; then
+            for f in "${bbb_files[@]}"; do
+                cp "$f" "${f}.bak.$(date +%Y%m%d_%H%M%S)"
+                sed -i -E 's|^(deb[[:space:]].*ubuntu\.bigbluebutton\.org.*)|# \1  # disabled by Iranian Servers Toolkit — no public mirror|g' "$f"
+                echo -e "${GREEN}Commented out:${NC} $f"
+            done
+            echo -e "${CYAN}apt update will no longer fail on this source.${NC}"
+            echo -e "Re-enable it after fixing DNS by removing the '# disabled' lines."
+        else
+            echo -e "${CYAN}Left unchanged.${NC}"
+        fi
+    fi
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Summary
+    # ════════════════════════════════════════════════════════════════════════
+    if [ "$found_any" -eq 0 ]; then
+        echo -e "${GREEN}No known blocked APT sources found — nothing to fix.${NC}"
+        return
+    fi
 
     echo
     echo -e "${CYAN}Running apt-get update to verify...${NC}"
-    if apt-get update 2>&1 | grep -E '(Err|error|403)' | grep -i gitlab; then
-        echo -e "${RED}Warning:${NC} apt update still shows a GitLab error. Check the output above."
+    local update_out
+    update_out=$(apt-get update 2>&1)
+    local bad_lines
+    bad_lines=$(echo "$update_out" | grep -E '(Err:|403|Failed to fetch)' | grep -iE 'gitlab|bigbluebutton')
+    if [ -n "$bad_lines" ]; then
+        echo -e "${RED}Still seeing errors:${NC}"
+        echo "$bad_lines"
+        echo -e "Remaining fix: switch DNS (DNS Tools -> Set DNS) then retry apt."
     else
-        echo -e "${GREEN}apt update succeeded — GitLab CE packages now reachable via Framasoft mirror.${NC}"
+        echo -e "${GREEN}apt update clean — no more GitLab/BigBlueButton errors.${NC}"
         echo -e "${CYAN}You can now run:${NC} sudo apt upgrade"
     fi
 }
@@ -1593,7 +1640,7 @@ dns_menu() {
 }
 
 docker_menu() {
-    local items=("Install Docker" "Update Docker" "Install Podman" "Install containerd" "Install Buildah & Skopeo" "Fix GitLab APT Source (403)" "Install Docker Compose" "Set Docker Proxy" "Reset Docker Proxy" "Set containerd / K8s Mirror" "Reset containerd / K8s Mirror" "Set Podman Mirror" "Reset Podman Mirror" "Test Mirror Health")
+    local items=("Install Docker" "Update Docker" "Install Podman" "Install containerd" "Install Buildah & Skopeo" "Fix Blocked APT Sources (403)" "Install Docker Compose" "Set Docker Proxy" "Reset Docker Proxy" "Set containerd / K8s Mirror" "Reset containerd / K8s Mirror" "Set Podman Mirror" "Reset Podman Mirror" "Test Mirror Health")
     while true; do
         echo
         echo -e "${CYAN}Docker Tools:${NC}"
@@ -1607,7 +1654,7 @@ docker_menu() {
             3) install_podman ;;
             4) install_containerd ;;
             5) install_buildah_skopeo ;;
-            6) fix_gitlab_apt_source ;;
+            6) fix_blocked_apt_sources ;;
             7) install_compose ;;
             8) set_docker_proxy ;;
             9) reset_docker_proxy ;;
