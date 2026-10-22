@@ -110,6 +110,7 @@ A one-screen dashboard: OS, package manager, kernel, current DNS servers, number
 | **Install Podman** | Install Podman via the detected package manager. Skips if already present. |
 | **Install containerd** | Install the containerd runtime, generate a default `/etc/containerd/config.toml` if missing, and enable the service. Tries `containerd` then `containerd.io`. |
 | **Install Buildah & Skopeo** | Install Buildah and Skopeo (the rest of the containers toolset that shares Podman's `registries.conf`). |
+| **Fix GitLab APT Source (403)** | Repair a broken `packages.gitlab.com` APT source that returns HTTP 403 in Iran. Detects CE vs EE: rewrites `gitlab-ce` sources to the [Framasoft mirror](https://apt.gitlab.mirror.framasoft.org) (provided specifically for sanctioned countries), installs the GPG key, backs up the original file, and runs `apt-get update`. For `gitlab-ee`, explains options (switch DNS or migrate to CE). |
 | **Install Docker Compose** | Install or update the `docker-compose-plugin`. |
 | **Set Docker Proxy** | Choose a registry mirror (or auto-select the fastest) and write `/etc/docker/daemon.json`, then restart Docker. |
 | **Reset Docker Proxy** | Remove the mirror from `daemon.json` (backing it up first) and restart Docker. |
@@ -215,9 +216,11 @@ The menu is split into two groups. The first three are [XODNS](https://xodns.net
 
 | Option | Mirror host | Upstream it serves |
 |--------|-------------|--------------------|
-| **XODNS Universal (all registries)** | `mirror.xodns.net` | `_default` — every registry at once (Docker Hub, `registry.k8s.io`, `gcr.io`, `quay.io`, `nvcr.io`, Helm…) via containerd's `?ns=` fallback |
+| **XODNS Universal (all registries)** | `mirror.xodns.net` | `_default` — every registry at once (Docker Hub, `registry.k8s.io`, `gcr.io`, `quay.io`, `nvcr.io`, `registry.gitlab.com`, Helm…) via containerd's `?ns=` fallback |
 | **XODNS Kubernetes** | `k8s-mirror.xodns.net` | `registry.k8s.io` |
 | **XODNS Docker Hub** | `docker-mirror.xodns.net` | `docker.io` |
+| **GitLab Registry (Liara)** | `gitlab-mirror.liara.ir` | `registry.gitlab.com` |
+| **GitLab Registry (mirrorlist.ir)** | `gitlab.mirrorlist.ir` | `registry.gitlab.com` |
 | **Iranian Docker Hub mirrors** | `docker.arvancloud.ir`, `focker.ir`, `mirrors.pardisco.co`, `docker.iranserver.com`, `mirror-docker.runflare.com`, and the rest of the registry-proxy list | `docker.io` only |
 
 > **Why the split?** A containerd `hosts.toml` maps one upstream registry per file. Only a mirror that advertises multi-registry proxying can serve `registry.k8s.io`/`gcr.io`/`quay.io` — that's why those are scoped to the XODNS universal/K8s gateways. The Iranian Docker Hub mirrors are offered too, but only for `docker.io`; pointing them at `registry.k8s.io` would just fail.

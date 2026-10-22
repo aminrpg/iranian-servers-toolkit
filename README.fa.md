@@ -128,6 +128,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 | **Install Podman** | نصب Podman از طریق پکیج‌منیجر تشخیص‌داده‌شده. اگر نصب باشد رد می‌شود. |
 | **Install containerd** | نصب رانتایم containerd، ساخت `/etc/containerd/config.toml` پیش‌فرض در صورت نبود و فعال‌کردن سرویس. ابتدا `containerd` سپس `containerd.io` را امتحان می‌کند. |
 | **Install Buildah & Skopeo** | نصب Buildah و Skopeo (بقیه‌ی مجموعه‌ی containers که همان `registries.conf` پادمن را به اشتراک می‌گذارند). |
+| **Fix GitLab APT Source (403)** | رفع خطای HTTP 403 روی منبع APT مربوط به `packages.gitlab.com` در ایران. نوع نصب (CE یا EE) را تشخیص می‌دهد: برای `gitlab-ce` منبع را به [میرور Framasoft](https://apt.gitlab.mirror.framasoft.org) (ارائه‌شده خصوصاً برای کشورهای تحریمی) بازنویسی می‌کند، کلید GPG را نصب و فایل اصلی را پشتیبان می‌گیرد، سپس `apt-get update` را اجرا می‌کند. برای `gitlab-ee` گزینه‌ها (تغییر DNS یا مهاجرت به CE) را توضیح می‌دهد. |
 | **Install Docker Compose** | نصب یا به‌روزرسانی `docker-compose-plugin`. |
 | **Set Docker Proxy** | انتخاب میرور (یا انتخاب خودکار سریع‌ترین)، نوشتن `/etc/docker/daemon.json` و ری‌استارت Docker. |
 | **Reset Docker Proxy** | حذف میرور از `daemon.json` (با پشتیبان‌گیری) و ری‌استارت Docker. |
@@ -253,9 +254,11 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/aminrpg/iranian-ser
 
 | گزینه | میزبان میرور | رجیستری مقصد |
 |--------|-------------|--------------------|
-| **XODNS Universal (all registries)** | `mirror.xodns.net` | `_default` — همه‌ی رجیستری‌ها یکجا (Docker Hub، `registry.k8s.io`، `gcr.io`، `quay.io`، `nvcr.io`، Helm…) با fallback `?ns=` کانتینرد |
+| **XODNS Universal (all registries)** | `mirror.xodns.net` | `_default` — همه‌ی رجیستری‌ها یکجا (Docker Hub، `registry.k8s.io`، `gcr.io`، `quay.io`، `nvcr.io`، `registry.gitlab.com`، Helm…) با fallback `?ns=` کانتینرد |
 | **XODNS Kubernetes** | `k8s-mirror.xodns.net` | `registry.k8s.io` |
 | **XODNS Docker Hub** | `docker-mirror.xodns.net` | `docker.io` |
+| **GitLab Registry (Liara)** | `gitlab-mirror.liara.ir` | `registry.gitlab.com` |
+| **GitLab Registry (mirrorlist.ir)** | `gitlab.mirrorlist.ir` | `registry.gitlab.com` |
 | **میرورهای Docker Hub ایرانی** | `docker.arvancloud.ir`، `focker.ir`، `mirrors.pardisco.co`، `docker.iranserver.com`، `mirror-docker.runflare.com` و بقیه‌ی فهرست پروکسی | فقط `docker.io` |
 
 > **چرا این تفکیک؟** هر فایل `hosts.toml` در کانتینرد فقط یک رجیستری مقصد را نگاشت می‌کند. تنها میروری که صراحتاً از آینه‌سازی چندرجیستری پشتیبانی کند می‌تواند `registry.k8s.io`/`gcr.io`/`quay.io` را سرو کند — به همین دلیل این‌ها به درگاه‌های جامع/کوبرنتیز XODNS محدود شده‌اند. میرورهای Docker Hub ایرانی هم ارائه می‌شوند، اما فقط برای `docker.io`؛ اشاره‌دادن آن‌ها به `registry.k8s.io` صرفاً شکست می‌خورد.

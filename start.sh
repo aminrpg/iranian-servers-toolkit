@@ -265,16 +265,20 @@ registry_proxies=(
 #
 # The Iranian Docker Hub mirrors from $registry_proxies are offered too, but
 # scoped to docker.io only — they mirror Docker Hub, not registry.k8s.io/gcr/quay.
-containerd_mirror_options=("XODNS Universal (all registries)" "XODNS Kubernetes (registry.k8s.io)" "XODNS Docker Hub")
+containerd_mirror_options=("XODNS Universal (all registries)" "XODNS Kubernetes (registry.k8s.io)" "XODNS Docker Hub" "GitLab Registry (Liara)" "GitLab Registry (mirrorlist.ir)")
 declare -A containerd_mirror_hosts=(
     ["XODNS Universal (all registries)"]="mirror.xodns.net"
     ["XODNS Kubernetes (registry.k8s.io)"]="k8s-mirror.xodns.net"
     ["XODNS Docker Hub"]="docker-mirror.xodns.net"
+    ["GitLab Registry (Liara)"]="gitlab-mirror.liara.ir"
+    ["GitLab Registry (mirrorlist.ir)"]="gitlab.mirrorlist.ir"
 )
 declare -A containerd_mirror_upstreams=(
     ["XODNS Universal (all registries)"]="_default"
     ["XODNS Kubernetes (registry.k8s.io)"]="registry.k8s.io"
     ["XODNS Docker Hub"]="docker.io"
+    ["GitLab Registry (Liara)"]="registry.gitlab.com"
+    ["GitLab Registry (mirrorlist.ir)"]="registry.gitlab.com"
 )
 
 # DNS Management Functions
@@ -768,6 +772,129 @@ install_buildah_skopeo() {
     fi
 }
 
+# Fix a broken packages.gitlab.com APT source (HTTP 403 in Iran).
+# The function finds any .list or .sources file pointing at packages.gitlab.com,
+# identifies whether it is gitlab-ce or gitlab-ee, and rewrites it to use a
+# mirror that is reachable from inside Iran, then runs apt-get update.
+#
+# gitlab-ce  → Framasoft mirror (apt.gitlab.mirror.framasoft.org), explicitly
+#              provided for sanctioned countries including Iran.
+# gitlab-ee  → No public APT mirror exists for EE. The function explains the
+#              options: switch DNS to one that unblocks packages.gitlab.com
+#              (e.g. XODNS/Shecan), or migrate to gitlab-ce.
+fix_gitlab_apt_source() {
+    if [ "$PKG_MANAGER" != "apt" ]; then
+        echo -e "${CYAN}This fix only applies to Debian/Ubuntu (apt) systems.${NC}"
+        return
+    fi
+
+    echo
+    echo -e "${CYAN}Scanning for broken packages.gitlab.com APT sources...${NC}"
+
+    # Collect every file under apt that references packages.gitlab.com
+    local broken_files=()
+    while IFS= read -r f; do
+        broken_files+=("$f")
+    done < <(grep -rlE 'packages\.gitlab\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null)
+
+    if [ ${#broken_files[@]} -eq 0 ]; then
+        echo -e "${GREEN}No packages.gitlab.com sources found — nothing to fix.${NC}"
+        return
+    fi
+
+    echo -e "${GREEN}Found:${NC}"
+    local f
+    for f in "${broken_files[@]}"; do
+        echo "  $f"
+        grep -E 'packages\.gitlab\.com' "$f" | sed 's/^/    /'
+    done
+    echo
+
+    # Determine edition (ce or ee) from the file content
+    local edition=""
+    for f in "${broken_files[@]}"; do
+        if grep -qE 'gitlab-ee' "$f" 2>/dev/null; then
+            edition="ee"; break
+        elif grep -qE 'gitlab-ce' "$f" 2>/dev/null; then
+            edition="ce"
+        fi
+    done
+
+    if [ "$edition" = "ee" ]; then
+        echo -e "${RED}GitLab EE detected.${NC}"
+        echo -e "No public APT mirror exists for GitLab EE packages from inside Iran."
+        echo -e "Your options:"
+        echo -e "  ${CYAN}1)${NC} Switch your DNS to XODNS, Shecan, or another resolver that"
+        echo -e "     unblocks packages.gitlab.com (DNS Tools -> Set DNS), then retry apt."
+        echo -e "  ${CYAN}2)${NC} Migrate from EE to CE:"
+        echo -e "     https://docs.gitlab.com/ee/downgrade_ee_to_ce/"
+        echo -e "     CE covers most self-hosted use-cases and its packages are mirrored."
+        return
+    fi
+
+    # gitlab-ce path — rewrite to Framasoft mirror
+    # Detect distro codename
+    local codename
+    codename=$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")
+    if [ -z "$codename" ]; then
+        codename=$(lsb_release -cs 2>/dev/null)
+    fi
+
+    local os_id
+    os_id=$(. /etc/os-release 2>/dev/null && echo "${ID:-debian}")
+
+    # Map codename to a path fragment the Framasoft mirror supports
+    local mirror_path=""
+    case "$codename" in
+        noble|jammy|focal)   mirror_path="ubuntu/$codename" ;;
+        trixie|bookworm|bullseye) mirror_path="debian/$codename" ;;
+        *)
+            echo -e "${RED}Unsupported codename:${NC} $codename"
+            echo -e "Framasoft supports: Ubuntu noble/jammy/focal, Debian trixie/bookworm/bullseye."
+            echo -e "As an alternative, switch DNS (DNS Tools -> Set DNS) to unblock packages.gitlab.com."
+            return
+            ;;
+    esac
+
+    local mirror_base="https://apt.gitlab.mirror.framasoft.org/gitlab/gitlab-ce"
+    local new_deb_line="deb [signed-by=/usr/share/keyrings/gitlab-mirror-framasoft.gpg] ${mirror_base}/${mirror_path} ${codename} main"
+
+    echo -e "${CYAN}Will rewrite packages.gitlab.com -> Framasoft mirror for gitlab-ce (${codename}).${NC}"
+    echo -e "New source line:"
+    echo -e "  $new_deb_line"
+    echo
+    read -rp "Apply this fix? (y/N): " go
+    [[ "$go" =~ ^[Yy]$ ]] || { echo -e "${CYAN}Cancelled.${NC}"; return; }
+
+    # Add Framasoft GPG key
+    echo -e "${GREEN}Fetching Framasoft GPG key...${NC}"
+    if ! curl -fsSL "${mirror_base}/gpgkey" \
+            | gpg --dearmor -o /usr/share/keyrings/gitlab-mirror-framasoft.gpg 2>/dev/null; then
+        echo -e "${RED}Error:${NC} Failed to fetch or install the GPG key."
+        echo -e "Check your network or DNS and try again."
+        return 1
+    fi
+    echo -e "${GREEN}GPG key installed.${NC}"
+
+    # Rewrite each broken file — back up first, then replace the broken line
+    for f in "${broken_files[@]}"; do
+        cp "$f" "${f}.bak.$(date +%Y%m%d_%H%M%S)"
+        # Comment out the old packages.gitlab.com line and append the new one
+        sed -i -E 's|^(deb[[:space:]].*packages\.gitlab\.com.*)|# \1  # disabled by Iranian Servers Toolkit|g' "$f"
+        echo "$new_deb_line" >> "$f"
+        echo -e "${GREEN}Updated:${NC} $f"
+    done
+
+    echo
+    echo -e "${CYAN}Running apt-get update to verify...${NC}"
+    if apt-get update 2>&1 | grep -E '(Err|error|403)' | grep -i gitlab; then
+        echo -e "${RED}Warning:${NC} apt update still shows a GitLab error. Check the output above."
+    else
+        echo -e "${GREEN}apt update succeeded — GitLab CE packages now reachable via Framasoft mirror.${NC}"
+        echo -e "${CYAN}You can now run:${NC} sudo apt upgrade"
+    fi
+}
+
 # Find fastest proxy automatically
 find_fastest_proxy() {
     echo -e "${CYAN}Testing proxies for best performance...${NC}" >&2
@@ -1071,7 +1198,7 @@ reset_containerd_mirror() {
 # Upstream registries covered by a "universal" gateway. Podman has no
 # equivalent of containerd's _default fallback, so for a universal mirror we
 # write one [[registry]] pull-through block per upstream, all pointing at it.
-podman_universal_upstreams=("docker.io" "registry.k8s.io" "gcr.io" "quay.io" "nvcr.io")
+podman_universal_upstreams=("docker.io" "registry.k8s.io" "gcr.io" "quay.io" "nvcr.io" "registry.gitlab.com")
 
 # Configure Podman (and other github.com/containers tools: Buildah, Skopeo,
 # CRI-O) to pull images through a mirror. Podman does NOT read Docker's
@@ -1466,7 +1593,7 @@ dns_menu() {
 }
 
 docker_menu() {
-    local items=("Install Docker" "Update Docker" "Install Podman" "Install containerd" "Install Buildah & Skopeo" "Install Docker Compose" "Set Docker Proxy" "Reset Docker Proxy" "Set containerd / K8s Mirror" "Reset containerd / K8s Mirror" "Set Podman Mirror" "Reset Podman Mirror" "Test Mirror Health")
+    local items=("Install Docker" "Update Docker" "Install Podman" "Install containerd" "Install Buildah & Skopeo" "Fix GitLab APT Source (403)" "Install Docker Compose" "Set Docker Proxy" "Reset Docker Proxy" "Set containerd / K8s Mirror" "Reset containerd / K8s Mirror" "Set Podman Mirror" "Reset Podman Mirror" "Test Mirror Health")
     while true; do
         echo
         echo -e "${CYAN}Docker Tools:${NC}"
@@ -1480,14 +1607,15 @@ docker_menu() {
             3) install_podman ;;
             4) install_containerd ;;
             5) install_buildah_skopeo ;;
-            6) install_compose ;;
-            7) set_docker_proxy ;;
-            8) reset_docker_proxy ;;
-            9) set_containerd_mirror ;;
-            10) reset_containerd_mirror ;;
-            11) set_podman_mirror ;;
-            12) reset_podman_mirror ;;
-            13) test_mirror_health ;;
+            6) fix_gitlab_apt_source ;;
+            7) install_compose ;;
+            8) set_docker_proxy ;;
+            9) reset_docker_proxy ;;
+            10) set_containerd_mirror ;;
+            11) reset_containerd_mirror ;;
+            12) set_podman_mirror ;;
+            13) reset_podman_mirror ;;
+            14) test_mirror_health ;;
             0) return ;;
             *) echo -e "${RED}Invalid choice${NC}" ;;
         esac
